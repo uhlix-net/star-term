@@ -1,0 +1,68 @@
+Package: vcpkg-cmake-config
+Version: 2024-05-23
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 1b115e07875b8efed7e6dd8c2c527ba4a9ddc30276092be564a4f286d3be5490
+Status: install ok installed
+
+Package: vcpkg-cmake
+Version: 2024-04-23
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 9869b04895f49ffee5b5391674a725e44d8167803edb7aff8051ba065b412576
+Status: install ok installed
+
+Package: zlib
+Version: 1.3.2
+Port-Version: 1
+Depends: vcpkg-cmake, vcpkg-cmake-config
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 94a75075008c4b06011aec5749dcfd2c4dd202a15db0617af6454ac94bcf1393
+Description: A compression library
+Status: install ok installed
+
+Package: vcpkg-cmake-get-vars
+Version: 2025-05-29
+Depends: vcpkg-cmake
+Architecture: x64-windows
+Multi-Arch: same
+Abi: db24250f5fb391b6a1090824497deb8006ee55a15316aa94d7a81fb611119851
+Status: install ok installed
+
+Package: openssl
+Version: 3.6.3
+Depends: vcpkg-cmake, vcpkg-cmake-config, vcpkg-cmake-get-vars
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 68f1adefd2d0269b78b2a8e1d805585b9c591fea09b2b3604ec6e97a00d6790f
+Description: OpenSSL is an open source project that provides a robust, commercial-grade, and full-featured toolkit for the Transport Layer Security (TLS) and Secure Sockets Layer (SSL) protocols. It is also a general-purpose cryptography library.
+Status: install ok installed
+
+Package: libssh2
+Version: 1.11.1
+Port-Version: 3
+Depends: vcpkg-cmake, vcpkg-cmake-config
+Architecture: x64-windows
+Multi-Arch: same
+Abi: ac6a282d331711b073e682065fbc5dd64137a6d4f4aa4945856cdf463aede0c9
+Description: libssh2 is a client-side C library implementing the SSH2 protocol.
+Default-Features: openssl, zlib
+Status: install ok installed
+
+Package: libssh2
+Feature: openssl
+Depends: openssl
+Architecture: x64-windows
+Multi-Arch: same
+Description: Use the openssl crypto backend
+Status: install ok installed
+
+Package: libssh2
+Feature: zlib
+Depends: zlib
+Architecture: x64-windows
+Multi-Arch: same
+Description: Use compression via zlib
+Status: install ok installed
+

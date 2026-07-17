@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
+  "name": "star-term-cpp",
+  "version": "1.0.0",
+  "dependencies": [
+    {
+      "name": "libssh2",
+      "features": ["openssl"]
+    },
+    "openssl"
+  ]
+}

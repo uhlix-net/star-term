@@ -1,0 +1,5 @@
+U:/home/huhl/git-repos/star-term/windows-cpp/build/CMakeFiles/star_term_cpp.dir
+U:/home/huhl/git-repos/star-term/windows-cpp/build/CMakeFiles/star_term_cpp_autogen_timestamp_deps.dir
+U:/home/huhl/git-repos/star-term/windows-cpp/build/CMakeFiles/star_term_cpp_autogen.dir
+U:/home/huhl/git-repos/star-term/windows-cpp/build/CMakeFiles/ALL_BUILD.dir
+U:/home/huhl/git-repos/star-term/windows-cpp/build/CMakeFiles/ZERO_CHECK.dir

@@ -1,0 +1,40 @@
+^U:\HOME\HUHL\GIT-REPOS\STAR-TERM\WINDOWS-CPP\BUILD\CMAKEFILES\7139EBF55D0F01A856B6952BBCF0358B\TIMESTAMP_(CONFIG).RULE
+setlocal
+cd U:\home\huhl\git-repos\star-term\windows-cpp\build
+if %errorlevel% neq 0 goto :cmEnd
+U:
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -E cmake_autogen U:/home/huhl/git-repos/star-term/windows-cpp/build/CMakeFiles/star_term_cpp_autogen.dir/AutogenInfo.json Release
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -E touch U:/home/huhl/git-repos/star-term/windows-cpp/build/star_term_cpp_autogen/timestamp_Release
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\CMake\bin\cmake.exe" -E cmake_transform_depfile "Visual Studio 18 2026" MSBuildAdditionalInputs U:/home/huhl/git-repos/star-term/windows-cpp U:/home/huhl/git-repos/star-term/windows-cpp U:/home/huhl/git-repos/star-term/windows-cpp/build U:/home/huhl/git-repos/star-term/windows-cpp/build U:/home/huhl/git-repos/star-term/windows-cpp/build/star_term_cpp_autogen/deps_Release U:/home/huhl/git-repos/star-term/windows-cpp/build/CMakeFiles/d/40a34afdc31d2cf7936255659fa97aa08053709c6435498a869826ac9a1adcdf.AdditionalInputs
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^U:\HOME\HUHL\GIT-REPOS\STAR-TERM\WINDOWS-CPP\BUILD\CMAKEFILES\5DBD46E46A5AA63ACA78DC4A559C7FA3\STAR_TERM_CPP_AUTOGEN.RULE
+setlocal
+cd U:\home\huhl\git-repos\star-term\windows-cpp\build
+if %errorlevel% neq 0 goto :cmEnd
+U:
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^U:\HOME\HUHL\GIT-REPOS\STAR-TERM\WINDOWS-CPP\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SU:/home/huhl/git-repos/star-term/windows-cpp -BU:/home/huhl/git-repos/star-term/windows-cpp/build --check-stamp-file U:/home/huhl/git-repos/star-term/windows-cpp/build/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
