@@ -31,7 +31,6 @@ Function .onInit
   BringToFront
 
   ; Check if the application is currently running and offer to close it.
-  check_running:
     FindWindow $0 "" "Star Term"
     IntCmp $0 0 not_running app_running app_running
 
