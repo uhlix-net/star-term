@@ -15,6 +15,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -30,10 +31,11 @@ PreferencesDialog::PreferencesDialog(
     setWindowTitle("Preferences");
 
     QTabWidget *tabs = new QTabWidget;
-    tabs->addTab(buildGeneralTab(themeName),                        "General");
+    tabs->addTab(buildGeneralTab(themeName),                          "General");
     tabs->addTab(buildTerminalTab(fontFamily, fontSize, cursorStyle), "Terminal");
-    tabs->addTab(buildSSHTab(),                                     "SSH Key");
-    tabs->addTab(buildUpdatesTab(),                                 "Updates");
+    tabs->addTab(buildSSHTab(),                                       "SSH Key");
+    tabs->addTab(buildUpdatesTab(),                                   "Updates");
+    tabs->addTab(buildRdpTab(),                                       "RDP");
 
     QDialogButtonBox *buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
@@ -70,9 +72,10 @@ QWidget *PreferencesDialog::buildGeneralTab(const QString &themeName) {
 
 QJsonObject PreferencesDialog::getGeneralSettings() const {
     QJsonObject s;
-    s["theme"]         = m_themeCombo->currentText().toLower();
-    s["debug"]         = m_debugCheck->isChecked();
-    s["check_updates"] = m_checkUpdatesCheck->isChecked();
+    s["theme"]           = m_themeCombo->currentText().toLower();
+    s["debug"]           = m_debugCheck->isChecked();
+    s["check_updates"]   = m_checkUpdatesCheck->isChecked();
+    s["rdp_resize_mode"] = m_rdpScaleRadio->isChecked() ? QString("scale") : QString("scroll");
     return s;
 }
 
@@ -181,4 +184,40 @@ QJsonObject PreferencesDialog::getTerminalSettings() const {
     s["font_size"]    = sz;
     s["cursor_style"] = m_cursorCombo->currentText().toLower();
     return s;
+}
+
+// -----------------------------------------------------------------------
+QWidget *PreferencesDialog::buildRdpTab() {
+    QWidget *w = new QWidget;
+    QJsonObject settings = loadSettings();
+    QString mode = settings.value("rdp_resize_mode").toString("scroll");
+
+    m_rdpScaleRadio  = new QRadioButton("Scale to fit");
+    m_rdpScrollRadio = new QRadioButton("Fixed resolution with scroll bars");
+
+    if (mode == "scale") m_rdpScaleRadio->setChecked(true);
+    else                 m_rdpScrollRadio->setChecked(true);
+
+    QLabel *scaleNote = new QLabel(
+        "Scales the remote desktop to fill the window. Windows will show\n"
+        "a one-time security prompt when starting a scale-mode session.");
+    scaleNote->setObjectName("mutedNote");
+    scaleNote->setWordWrap(true);
+
+    QLabel *scrollNote = new QLabel(
+        "Keeps the session at its original resolution. Scroll bars\n"
+        "appear when the window is smaller than the session.");
+    scrollNote->setObjectName("mutedNote");
+    scrollNote->setWordWrap(true);
+
+    QVBoxLayout *layout = new QVBoxLayout(w);
+    layout->addWidget(new QLabel("Window resize behavior:"));
+    layout->addSpacing(4);
+    layout->addWidget(m_rdpScaleRadio);
+    layout->addWidget(scaleNote);
+    layout->addSpacing(8);
+    layout->addWidget(m_rdpScrollRadio);
+    layout->addWidget(scrollNote);
+    layout->addStretch();
+    return w;
 }

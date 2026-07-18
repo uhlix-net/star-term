@@ -1,12 +1,18 @@
 #include "rdppane.h"
+#include "config.h"
 
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QFile>
 #include <QFormLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QResizeEvent>
+#include <QScrollArea>
 #include <QShowEvent>
+#include <QStandardPaths>
+#include <QTextStream>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -72,9 +78,19 @@ RdpPane::RdpPane(const QJsonObject &session, QWidget *parent)
     m_status = new QLabel(QString("Connecting to %1...").arg(m_host));
     m_status->setAlignment(Qt::AlignCenter);
 
+    // Scroll-mode widgets — hidden until a scroll-mode session is established.
+    m_scrollContainer = new QWidget();
+    m_scrollContainer->setAttribute(Qt::WA_NativeWindow);
+    m_scrollArea = new QScrollArea();
+    m_scrollArea->setWidget(m_scrollContainer);
+    m_scrollArea->setWidgetResizable(false);
+    m_scrollArea->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    m_scrollArea->hide();
+
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(m_status);
+    layout->addWidget(m_scrollArea, 1);
 }
 
 void RdpPane::showEvent(QShowEvent *event)
@@ -90,6 +106,10 @@ void RdpPane::showEvent(QShowEvent *event)
 
 void RdpPane::connectToHost()
 {
+    // Read the resize mode preference set in Preferences → RDP.
+    QJsonObject settings = loadSettings();
+    m_scaleMode = (settings.value("rdp_resize_mode").toString("scroll") == "scale");
+
     // --- Credential dialog (appears inside the app, not as a separate window) ---
     QDialog credDlg;
     credDlg.setWindowTitle(QString("Connect to %1").arg(m_host));
@@ -126,27 +146,46 @@ void RdpPane::connectToHost()
     // Snapshot existing TscShellContainerClass windows so we don't steal one.
     EnumWindows(snapshotRdpSessions, reinterpret_cast<LPARAM>(&m_existingWindows));
 
-    // Launch mstsc.exe with command-line flags only — no .rdp file — to avoid
-    // the "unsigned connection file" caution dialog that mstsc shows for any
-    // .rdp file without a digital signature.
-    // Use PHYSICAL pixels (logical * DPR) for /w and /h: mstsc interprets
-    // these as the actual session resolution, and Win32 SetWindowPos also
-    // operates in physical pixels.  Using logical pixels on a HiDPI monitor
-    // (e.g. 150% = DPR 1.5) would make the embedded window fill only ~67%
-    // of the tab, leaving a blank strip.
+    // Physical-pixel dimensions for the session resolution and Win32 calls.
     const qreal dpr = devicePixelRatioF();
-    const int   pw  = qRound(width()  * dpr);
-    const int   ph  = qRound(height() * dpr);
+    m_sessionPw = qRound(width()  * dpr);
+    m_sessionPh = qRound(height() * dpr);
 
     QStringList args;
-    args << QString("/v:%1:%2").arg(m_host).arg(m_port);
-    if (pw > 0 && ph > 0)
-        args << QString("/w:%1").arg(pw) << QString("/h:%1").arg(ph);
-
     m_process = new QProcess(this);
     connect(m_process, &QProcess::finished, this, &RdpPane::onProcessFinished);
-    m_process->start("mstsc.exe", args);
 
+    if (m_scaleMode) {
+        // Scale mode: write a minimal .rdp file with smart sizing enabled.
+        // mstsc will scale the session content to fill the window when it is
+        // resized via SetWindowPos.  This requires a .rdp file — command-line
+        // flags alone cannot enable smart sizing.  Windows will show a one-time
+        // unsigned-file security prompt before the connection is made.
+        QString tmpDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+        m_rdpFilePath = tmpDir + QString("/star_term_rdp_%1.rdp").arg(
+            reinterpret_cast<quintptr>(this));
+
+        QFile f(m_rdpFilePath);
+        if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream ts(&f);
+            ts << "screen mode id:i:1\r\n"
+               << QString("desktopwidth:i:%1\r\n").arg(m_sessionPw)
+               << QString("desktopheight:i:%1\r\n").arg(m_sessionPh)
+               << "smart sizing:i:1\r\n"
+               << "prompt for credentials:i:0\r\n"
+               << "authentication level:i:2\r\n"
+               << QString("full address:s:%1:%2\r\n").arg(m_host).arg(m_port)
+               << QString("username:s:%1\r\n").arg(m_user);
+        }
+        args << m_rdpFilePath;
+    } else {
+        // Scroll mode: command-line only — avoids the unsigned-file dialog.
+        args << QString("/v:%1:%2").arg(m_host).arg(m_port);
+        if (m_sessionPw > 0 && m_sessionPh > 0)
+            args << QString("/w:%1").arg(m_sessionPw) << QString("/h:%1").arg(m_sessionPh);
+    }
+
+    m_process->start("mstsc.exe", args);
     if (!m_process->waitForStarted(5000)) {
         m_status->setText("Failed to launch mstsc.exe.");
         return;
@@ -178,6 +217,8 @@ RdpPane::~RdpPane()
     }
     if (!m_credKey.isEmpty())
         runHidden("cmdkey.exe", { QString("/delete:%1").arg(m_credKey) });
+    if (!m_rdpFilePath.isEmpty())
+        QFile::remove(m_rdpFilePath);
 }
 
 void RdpPane::pollForWindow()
@@ -189,7 +230,6 @@ void RdpPane::pollForWindow()
     m_pollTimer->stop();
 
     HWND hwnd = data.found;
-    HWND ours = reinterpret_cast<HWND>(winId());
 
     LONG style = GetWindowLong(hwnd, GWL_STYLE);
     style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX |
@@ -202,15 +242,42 @@ void RdpPane::pollForWindow()
                  WS_EX_CLIENTEDGE | WS_EX_STATICEDGE);
     SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
 
-    SetParent(hwnd, ours);
-    m_mstscHwnd = reinterpret_cast<WId>(hwnd);
+    if (m_scaleMode) {
+        // Scale mode: embed directly in the RdpPane.  resizeEvent will call
+        // SetWindowPos to keep mstsc filling the tab; smart sizing scales
+        // the content to fit.
+        HWND ours = reinterpret_cast<HWND>(winId());
+        SetParent(hwnd, ours);
+        m_mstscHwnd = reinterpret_cast<WId>(hwnd);
 
-    const qreal dpr2 = devicePixelRatioF();
-    SetWindowPos(hwnd, HWND_TOP, 0, 0,
-                 qRound(width() * dpr2), qRound(height() * dpr2),
-                 SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        const qreal dpr = devicePixelRatioF();
+        SetWindowPos(hwnd, HWND_TOP, 0, 0,
+                     qRound(width() * dpr), qRound(height() * dpr),
+                     SWP_FRAMECHANGED | SWP_SHOWWINDOW);
 
-    m_status->hide();
+        m_status->hide();
+    } else {
+        // Scroll mode: embed inside the scroll container at the fixed session
+        // resolution.  The QScrollArea provides scrollbars when the tab is
+        // smaller than the session; no blank area when it is larger.
+        const qreal dpr = devicePixelRatioF();
+        const int lw = qRound(m_sessionPw / dpr);
+        const int lh = qRound(m_sessionPh / dpr);
+        m_scrollContainer->resize(lw, lh);
+
+        m_scrollArea->show();
+        m_status->hide();
+
+        // Showing the scroll area ensures its viewport and container have
+        // native HWNDs before we call winId().
+        HWND containerHwnd = reinterpret_cast<HWND>(m_scrollContainer->winId());
+        SetParent(hwnd, containerHwnd);
+        m_mstscHwnd = reinterpret_cast<WId>(hwnd);
+
+        SetWindowPos(hwnd, HWND_TOP, 0, 0,
+                     m_sessionPw, m_sessionPh,
+                     SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    }
 
     // NLA auth is complete at this point — remove the stored credentials.
     if (!m_credKey.isEmpty()) {
@@ -222,16 +289,17 @@ void RdpPane::pollForWindow()
 void RdpPane::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
-    // Guard against zero-size resize events (e.g. when tab is hidden/removed)
-    // to avoid sending WM_SIZE(0,0) to mstsc, which can destabilise the session.
-    if (m_mstscHwnd && event->size().width() > 0 && event->size().height() > 0) {
-        HWND hwnd = reinterpret_cast<HWND>(m_mstscHwnd);
-        const qreal dpr = devicePixelRatioF();
-        SetWindowPos(hwnd, nullptr, 0, 0,
-                     qRound(event->size().width()  * dpr),
-                     qRound(event->size().height() * dpr),
-                     SWP_NOZORDER | SWP_NOACTIVATE);
-    }
+    if (!m_mstscHwnd || !m_scaleMode) return;
+    if (event->size().width() <= 0 || event->size().height() <= 0) return;
+
+    // Scale mode: resize the mstsc HWND to fill the tab.  Smart sizing
+    // (enabled via the .rdp file) scales the session content to fit.
+    HWND hwnd = reinterpret_cast<HWND>(m_mstscHwnd);
+    const qreal dpr = devicePixelRatioF();
+    SetWindowPos(hwnd, nullptr, 0, 0,
+                 qRound(event->size().width()  * dpr),
+                 qRound(event->size().height() * dpr),
+                 SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 void RdpPane::onProcessFinished()
@@ -240,6 +308,11 @@ void RdpPane::onProcessFinished()
     m_mstscHwnd = 0; // Window already gone — process exited
     m_status->setText(QString("Disconnected from %1.").arg(m_host));
     m_status->show();
+    m_scrollArea->hide();
+    if (!m_rdpFilePath.isEmpty()) {
+        QFile::remove(m_rdpFilePath);
+        m_rdpFilePath.clear();
+    }
 }
 
 void RdpPane::disconnectRdp()
@@ -270,5 +343,10 @@ void RdpPane::disconnectRdp()
         m_process->disconnect(); // Prevent onProcessFinished after cleanup
         if (m_process->state() != QProcess::NotRunning)
             m_process->kill();   // No blocking waitForFinished
+    }
+
+    if (!m_rdpFilePath.isEmpty()) {
+        QFile::remove(m_rdpFilePath);
+        m_rdpFilePath.clear();
     }
 }
