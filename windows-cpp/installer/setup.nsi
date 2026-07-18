@@ -1,5 +1,5 @@
 !define APPNAME "star_term_cpp"
-!define DISPLAYNAME "Star Term C++ Edition"
+!define DISPLAYNAME "Star Term"
 !define VERSION "0.3.0"
 !define PUBLISHER "uhlix.net"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
