@@ -43,9 +43,9 @@
 #include <QPushButton>
 #include <QApplication>
 
-static const QString APP_VERSION = "1.0.0";
+static const QString APP_VERSION = "0.2.0";
 
-static const QString UPDATE_HISTORY = R"(Version 1.0.0 - C++ Edition
+static const QString UPDATE_HISTORY = R"(Version 0.2.0 - C++ Edition
 
 - Complete C++ Qt6 port of the Python/PySide6 Star Term application
 - VT100 terminal emulation using a custom C++ parser (replaces pyte)
@@ -374,7 +374,7 @@ void MainWindow::onTabChanged(int index) {
     SessionPane *pane = qobject_cast<SessionPane*>(m_tabs->widget(index));
     m_remoteBrowser->setPane(pane);
     if (!m_multiExecAction->isChecked())
-        m_statusBar->updateStats(QJsonObject());
+        m_statusBar->updateStats(pane ? pane->lastStats : QJsonObject());
 }
 
 // -----------------------------------------------------------------------
@@ -476,6 +476,10 @@ void MainWindow::startSession(SessionPane *pane, const QJsonObject &params) {
     connect(session, &SSHSession::connected, this, [this, pane]() {
         onSessionConnected(pane);
     });
+    connect(pane, &SessionPane::statsUpdated, this, [this, pane](const QJsonObject &stats) {
+        if (!m_multiExecAction->isChecked() && pane == m_tabs->currentWidget())
+            m_statusBar->updateStats(stats);
+    });
     connect(session, &SSHSession::hostKeyUnknown,
             this, &MainWindow::onHostKeyUnknown);
 
@@ -485,9 +489,13 @@ void MainWindow::startSession(SessionPane *pane, const QJsonObject &params) {
 void MainWindow::onSessionConnected(SessionPane *pane) {
     if (pane == m_tabs->currentWidget())
         m_remoteBrowser->setPane(pane);
+    pane->startStatsWorker();
 }
 
 void MainWindow::onSessionEnded(SessionPane *pane) {
+    pane->stopStatsWorker();
+    if (!m_multiExecAction->isChecked() && pane == m_tabs->currentWidget())
+        m_statusBar->updateStats({});
     if (m_panes.contains(pane))
         pane->reconnectBtn->setVisible(true);
 }

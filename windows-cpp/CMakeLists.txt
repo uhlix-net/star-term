@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(star_term_cpp VERSION 1.0.0)
+project(star_term_cpp VERSION 0.2.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,6 +21,7 @@ set(SOURCES
     src/vt100.cpp
     src/terminalwidget.cpp
     src/sshsession.cpp
+    src/statsworker.cpp
     src/sessionpane.cpp
     src/sidebar.cpp
     src/remotebrowser.cpp
@@ -42,6 +43,7 @@ set(HEADERS
     src/vt100.h
     src/terminalwidget.h
     src/sshsession.h
+    src/statsworker.h
     src/sessionpane.h
     src/sidebar.h
     src/remotebrowser.h
