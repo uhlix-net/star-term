@@ -7,8 +7,8 @@ class QComboBox;
 class QFontComboBox;
 class QCheckBox;
 class QLineEdit;
+class QRadioButton;
 
-// Matches preferences_dialog.py exactly.
 class PreferencesDialog : public QDialog {
     Q_OBJECT
 public:
@@ -22,7 +22,7 @@ public:
     // Returns {"font_family", "font_size", "cursor_style"}
     QJsonObject getTerminalSettings() const;
 
-    // Returns {"theme", "debug"}
+    // Returns {"theme", "debug", "check_updates", "rdp_resize_mode", ...}
     QJsonObject getGeneralSettings() const;
 
 private slots:
@@ -34,6 +34,7 @@ private:
     QWidget *buildTerminalTab(const QString &fontFamily, int fontSize, const QString &cursorStyle);
     QWidget *buildSSHTab();
     QWidget *buildUpdatesTab();
+    QWidget *buildRdpTab();
 
     QComboBox     *m_themeCombo        = nullptr;
     QCheckBox     *m_debugCheck        = nullptr;
@@ -42,4 +43,6 @@ private:
     QComboBox     *m_cursorCombo       = nullptr;
     QLineEdit     *m_keyPathEdit       = nullptr;
     QCheckBox     *m_checkUpdatesCheck = nullptr;
+    QRadioButton  *m_rdpScaleRadio     = nullptr;
+    QRadioButton  *m_rdpScrollRadio    = nullptr;
 };
