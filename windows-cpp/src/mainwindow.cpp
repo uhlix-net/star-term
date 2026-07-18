@@ -50,7 +50,7 @@
 static const QString APP_VERSION = "0.3.0";
 
 static const QString UPDATE_HISTORY = R"(Version 0.3.0
-- RDP sessions embedded in main window via Windows ActiveX control
+- RDP sessions embedded in main window via Win32 window embedding
 - Right-click copy/paste with mouse drag selection in terminal
 - SSH and RDP session type icons in the session sidebar
 - Check for updates on startup (configurable in Preferences → Updates)
@@ -413,7 +413,7 @@ void MainWindow::openConnectionDialog() {
 }
 
 void MainWindow::connectSavedSession(const QJsonObject &session) {
-    // RDP sessions open in an embedded tab using the Windows RDP ActiveX control.
+    // RDP sessions open in an embedded tab using Win32 window embedding (mstsc.exe reparented).
     if (session.value("type").toString("ssh") == "rdp") {
         RdpPane *rdp = new RdpPane(session, this);
         m_tabs->addTab(rdp, rdp->name);

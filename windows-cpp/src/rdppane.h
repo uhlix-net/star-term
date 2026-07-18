@@ -1,37 +1,37 @@
 #pragma once
 #include <QJsonObject>
-#include <QShowEvent>
+#include <QProcess>
 #include <QWidget>
 
-class QAxWidget;
 class QLabel;
+class QTimer;
 
-// Hosts the Windows RDP ActiveX control (mstscax.dll / MsRdpClient10)
-// embedded in a tab. ActiveX initialization is deferred to showEvent so
-// the widget has a native Win32 HWND before setControl() is called.
+// Launches mstsc.exe with a temporary .rdp file, then locates its top-level
+// window by PID and reparents it into this widget using Win32 SetParent.
+// This avoids the ActiveX / AxContainer path entirely.
 class RdpPane : public QWidget {
     Q_OBJECT
 public:
     QString name;
     explicit RdpPane(const QJsonObject &session, QWidget *parent = nullptr);
+    ~RdpPane();
     void disconnectRdp();
 
 signals:
     void closeRequested();
 
 protected:
-    void showEvent(QShowEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private slots:
-    void initRdp();
-    void onConnected();
-    void onDisconnected(long reason);
+    void pollForWindow();
+    void onProcessFinished();
 
 private:
-    QAxWidget *m_rdp         = nullptr;
-    QLabel    *m_status      = nullptr;
-    QString    m_host;
-    QString    m_user;
-    int        m_port        = 3389;
-    bool       m_initialized = false;
+    QLabel   *m_status     = nullptr;
+    QTimer   *m_pollTimer  = nullptr;
+    QProcess *m_process    = nullptr;
+    QString   m_host;
+    QString   m_tmpRdpPath;
+    WId       m_mstscHwnd  = 0;  // WId = quintptr = same size as HWND on Windows
 };
