@@ -3,12 +3,15 @@
 
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QFile>
 #include <QFormLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QShowEvent>
+#include <QTextStream>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -164,11 +167,27 @@ void RdpPane::connectToHost()
     m_sessionPw = qRound(width()  * dpr);
     m_sessionPh = qRound(height() * dpr);
 
-    // Both modes use command-line launch only — no .rdp file.  Passing a .rdp
-    // file can cause mstsc to route through an existing mstsc instance (shell
-    // activation), placing TscShellContainerClass in a process we didn't
-    // launch, which breaks window detection and causes it to open separately.
+    // Scroll mode: write a minimal .rdp file that sets desktop scale factor to
+    // 100% so mstsc reports 96 DPI to the remote server, giving 1:1 pixel
+    // mapping.  The file intentionally omits "full address" — host comes from
+    // the command-line /v flag — so mstsc never routes through an existing
+    // instance and no unsigned-file dialog is triggered.
+    if (!m_scaleMode) {
+        m_rdpFilePath = QDir::tempPath() +
+                        QString("/star_term_rdp_%1.rdp").arg(reinterpret_cast<quintptr>(this));
+        QFile f(m_rdpFilePath);
+        if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream ts(&f);
+            ts << "desktop scale factor:i:100\r\n"
+               << "device scale factor:i:100\r\n";
+        } else {
+            m_rdpFilePath.clear();
+        }
+    }
+
     QStringList args;
+    if (!m_rdpFilePath.isEmpty())
+        args << m_rdpFilePath;
     args << QString("/v:%1:%2").arg(m_host).arg(m_port);
     if (m_sessionPw > 0 && m_sessionPh > 0)
         args << QString("/w:%1").arg(m_sessionPw) << QString("/h:%1").arg(m_sessionPh);
@@ -221,6 +240,8 @@ RdpPane::~RdpPane()
     }
     if (!m_credKey.isEmpty())
         runHidden("cmdkey.exe", { QString("/delete:%1").arg(m_credKey) });
+    if (!m_rdpFilePath.isEmpty())
+        QFile::remove(m_rdpFilePath);
 }
 
 void RdpPane::pollForWindow()
@@ -312,6 +333,10 @@ void RdpPane::onProcessFinished()
     if (m_pollTimer) m_pollTimer->stop();
     m_mstscHwnd = 0; // Window already gone — process exited
     m_cachedPass.clear(); // Require credential prompt on next manual connect
+    if (!m_rdpFilePath.isEmpty()) {
+        QFile::remove(m_rdpFilePath);
+        m_rdpFilePath.clear();
+    }
     m_status->setText(QString("Disconnected from %1.").arg(m_host));
     m_status->show();
     m_scrollArea->hide();
@@ -345,5 +370,9 @@ void RdpPane::disconnectRdp()
         m_process->disconnect(); // Prevent onProcessFinished after cleanup
         if (m_process->state() != QProcess::NotRunning)
             m_process->kill();   // No blocking waitForFinished
+    }
+    if (!m_rdpFilePath.isEmpty()) {
+        QFile::remove(m_rdpFilePath);
+        m_rdpFilePath.clear();
     }
 }
