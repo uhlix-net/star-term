@@ -12,25 +12,69 @@
 #  include <windows.h>
 #endif
 
-// ----------------------------------------------------------------------------
-// Win32 window-search helper — finds the first visible top-level window owned
-// by a specific PID.  Used to locate the mstsc.exe window after launch.
-// ----------------------------------------------------------------------------
-struct FindWinData { DWORD pid; HWND hwnd; };
+// ---------------------------------------------------------------------------
+// Helpers — find top-level windows belonging to any process named "mstsc.exe"
+// ---------------------------------------------------------------------------
 
-static BOOL CALLBACK enumProc(HWND hwnd, LPARAM lp)
+// Returns true if the process 'pid' is named "mstsc.exe" (case-insensitive).
+static bool isMstscPid(DWORD pid)
 {
-    auto *d = reinterpret_cast<FindWinData *>(lp);
+    HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!proc) return false;
+
+    WCHAR path[MAX_PATH] = {};
+    DWORD size = MAX_PATH;
+    bool match = false;
+    if (QueryFullProcessImageNameW(proc, 0, path, &size)) {
+        // Isolate just the filename portion of the full path.
+        LPCWSTR file = wcsrchr(path, L'\\');
+        file = file ? file + 1 : path;
+        // Case-insensitive compare with "mstsc.exe".
+        match = (_wcsicmp(file, L"mstsc.exe") == 0);
+    }
+    CloseHandle(proc);
+    return match;
+}
+
+// EnumWindows callback that collects visible top-level windows from mstsc.exe.
+struct MstscEnumData {
+    const QSet<quintptr> *exclude; // pre-existing windows to skip
+    HWND                  found;
+};
+
+static BOOL CALLBACK mstscEnumProc(HWND hwnd, LPARAM lp)
+{
+    auto *d = reinterpret_cast<MstscEnumData *>(lp);
+
+    // Skip windows that already existed before we launched.
+    if (d->exclude->contains(reinterpret_cast<quintptr>(hwnd))) return TRUE;
+
+    if (!IsWindowVisible(hwnd) || GetParent(hwnd) != nullptr) return TRUE;
+
     DWORD pid = 0;
     GetWindowThreadProcessId(hwnd, &pid);
-    if (pid == d->pid && IsWindowVisible(hwnd) && GetParent(hwnd) == nullptr) {
-        d->hwnd = hwnd;
-        return FALSE;
+    if (isMstscPid(pid)) {
+        d->found = hwnd;
+        return FALSE; // stop enumeration
     }
     return TRUE;
 }
 
-// ----------------------------------------------------------------------------
+// Snapshot all visible top-level windows that belong to mstsc.exe right now.
+struct SnapshotData { QSet<quintptr> *out; };
+static BOOL CALLBACK snapshotProc(HWND hwnd, LPARAM lp)
+{
+    auto *d = reinterpret_cast<SnapshotData *>(lp);
+    if (!IsWindowVisible(hwnd) || GetParent(hwnd) != nullptr) return TRUE;
+
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (isMstscPid(pid))
+        d->out->insert(reinterpret_cast<quintptr>(hwnd));
+    return TRUE;
+}
+
+// ---------------------------------------------------------------------------
 
 RdpPane::RdpPane(const QJsonObject &session, QWidget *parent)
     : QWidget(parent)
@@ -49,6 +93,11 @@ RdpPane::RdpPane(const QJsonObject &session, QWidget *parent)
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(m_status);
+
+    // Snapshot every mstsc.exe window that currently exists so we don't
+    // accidentally steal a session the user had open before this launch.
+    SnapshotData sd { &m_existingWindows };
+    EnumWindows(snapshotProc, reinterpret_cast<LPARAM>(&sd));
 
     // Write a temporary .rdp file so we can pass all parameters to mstsc.exe.
     m_tmpRdpPath = QDir::temp().filePath(
@@ -78,12 +127,15 @@ RdpPane::RdpPane(const QJsonObject &session, QWidget *parent)
         return;
     }
 
-    // Poll until mstsc's window becomes visible, then embed it.
+    // Poll until a new mstsc.exe top-level window appears, then embed it.
+    // We search by process name rather than by PID because on Windows 10/11
+    // the session window can live in a child or surrogate process that has a
+    // different PID from the one QProcess launched.
     m_pollTimer = new QTimer(this);
     connect(m_pollTimer, &QTimer::timeout, this, &RdpPane::pollForWindow);
     m_pollTimer->start(200);
-    // Give up after 20 seconds if no window appears.
-    QTimer::singleShot(20000, m_pollTimer, &QTimer::stop);
+    // Give up after 30 seconds if no window appears.
+    QTimer::singleShot(30000, m_pollTimer, &QTimer::stop);
 }
 
 RdpPane::~RdpPane()
@@ -93,16 +145,13 @@ RdpPane::~RdpPane()
 
 void RdpPane::pollForWindow()
 {
-    if (!m_process) return;
-
-    DWORD pid = static_cast<DWORD>(m_process->processId());
-    FindWinData data = { pid, nullptr };
-    EnumWindows(enumProc, reinterpret_cast<LPARAM>(&data));
-    if (!data.hwnd) return;
+    MstscEnumData data { &m_existingWindows, nullptr };
+    EnumWindows(mstscEnumProc, reinterpret_cast<LPARAM>(&data));
+    if (!data.found) return;
 
     m_pollTimer->stop();
 
-    HWND hwnd = data.hwnd;
+    HWND hwnd = data.found;
     HWND ours = reinterpret_cast<HWND>(winId());
 
     // Strip window decorations so it looks embedded, not floating.
@@ -132,7 +181,8 @@ void RdpPane::resizeEvent(QResizeEvent *event)
     QWidget::resizeEvent(event);
     if (m_mstscHwnd) {
         HWND hwnd = reinterpret_cast<HWND>(m_mstscHwnd);
-        SetWindowPos(hwnd, nullptr, 0, 0, event->size().width(), event->size().height(),
+        SetWindowPos(hwnd, nullptr, 0, 0,
+                     event->size().width(), event->size().height(),
                      SWP_NOZORDER | SWP_NOACTIVATE);
     }
 }
