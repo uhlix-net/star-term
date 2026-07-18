@@ -63,7 +63,7 @@ int main(int argc, char *argv[]) {
     app.setStyleSheet(getStylesheet(settings.value("theme").toString("dark")));
     app.setWindowIcon(Icons::appIcon());
 
-    // License gate (same logic as Python main.py)
+    // License gate
     LicenseStatus status = getLicenseStatus();
     if (!status.licensed && status.trialExpired) {
         LicenseGateDialog gate;

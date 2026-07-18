@@ -123,6 +123,8 @@ RdpPane::RdpPane(const QJsonObject &session, QWidget *parent)
         "username:s:%3\r\n"
         "prompt for credentials:i:0\r\n"
         "authentication level:i:2\r\n"
+        "dynamic resolution:i:1\r\n"
+        "smart sizing:i:0\r\n"
     ).arg(m_host).arg(port).arg(m_user);
 
     QFile f(m_tmpRdpPath);

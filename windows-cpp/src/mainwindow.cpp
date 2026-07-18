@@ -50,27 +50,25 @@
 static const QString APP_VERSION = "0.3.0";
 
 static const QString UPDATE_HISTORY = R"(Version 0.3.0
-- RDP sessions embedded in main window via Win32 window embedding
+- RDP sessions embedded in main window tab via Win32 window embedding
 - Right-click copy/paste with mouse drag selection in terminal
 - SSH and RDP session type icons in the session sidebar
 - Check for updates on startup (configurable in Preferences → Updates)
 
-Version 0.2.0 - C++ Edition
+Version 0.2.0
 
-- Complete C++ Qt6 port of the Python/PySide6 Star Term application
-- VT100 terminal emulation using a custom C++ parser (replaces pyte)
-- SSH connectivity via libssh2 (replaces paramiko)
-- Ed25519 offline license verification via OpenSSL (replaces cryptography)
-- Same feature set as Python edition:
-  - Tabbed multi-session support with Multi-Exec grid view
-  - Session sidebar with folder grouping and persistent storage
-  - SFTP remote file browser with drag-and-drop upload/download
-  - Macros panel for saved command sequences
-  - Scrollback buffer (2000 lines) with Shift+PageUp/Down
-  - Dark/Light themes, configurable font and cursor style
-  - Export/import sessions (JSON)
-  - 30-day trial with offline perpetual license key activation
-  - NSIS Windows installer
+- VT100 terminal emulation with custom parser
+- SSH connectivity via libssh2
+- Ed25519 offline license verification via OpenSSL
+- Tabbed multi-session support with Multi-Exec grid view
+- Session sidebar with folder grouping and persistent storage
+- SFTP remote file browser with drag-and-drop upload/download
+- Macros panel for saved command sequences
+- Scrollback buffer (2000 lines) with Shift+PageUp/Down
+- Dark/Light themes, configurable font and cursor style
+- Export/import sessions (JSON)
+- 30-day trial with offline perpetual license key activation
+- NSIS Windows installer
 )";
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
@@ -612,7 +610,7 @@ void MainWindow::showAboutDialog() {
     dlg.setWindowTitle("About Star Term");
 
     QLabel *versionLabel = new QLabel(
-        QString("Star Term v%1 (C++ Edition)").arg(APP_VERSION));
+        QString("Star Term v%1").arg(APP_VERSION));
     versionLabel->setAlignment(Qt::AlignCenter);
     QFont f = versionLabel->font();
     f.setBold(true);
