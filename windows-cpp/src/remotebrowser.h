@@ -10,6 +10,7 @@
 
 class QLabel;
 class QLineEdit;
+class QMutex;
 class QPushButton;
 class QToolButton;
 class QProgressBar;
@@ -44,7 +45,8 @@ private:
 };
 
 // -----------------------------------------------------------------------
-// SFTPWorker — runs a single SFTP op on a background thread (matches Python)
+// SFTPWorker — runs a single SFTP op on a background thread.
+// All libssh2 calls are serialized via sessionLock (shared with SSHSession).
 // -----------------------------------------------------------------------
 struct SFTPEntry {
     QString name;
@@ -58,18 +60,18 @@ public:
     enum Op { List, Home, Upload, Download };
 
     // Home
-    SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp,
+    SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp, QMutex *sessionLock,
                Op op, QObject *parent = nullptr);
     // Upload: localPath -> remotePath
-    SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp,
+    SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp, QMutex *sessionLock,
                const QString &localPath, const QString &remotePath,
                QObject *parent = nullptr);
     // Download: remotePath -> localPath  (bool flag disambiguates from upload)
-    SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp,
+    SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp, QMutex *sessionLock,
                const QString &remotePath, const QString &localPath,
                bool download, QObject *parent = nullptr);
     // List directory at path
-    SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp,
+    SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp, QMutex *sessionLock,
                const QString &path, QObject *parent = nullptr);
 
 signals:
@@ -85,6 +87,7 @@ protected:
 private:
     LIBSSH2_SESSION *m_session;
     LIBSSH2_SFTP    *m_sftp;
+    QMutex          *m_sessionLock;
     Op               m_op;
     QString          m_localPath;
     QString          m_remotePath;
@@ -98,9 +101,10 @@ class RemoteFileList : public QListWidget {
 public:
     explicit RemoteFileList(QWidget *parent = nullptr);
 
-    LIBSSH2_SESSION *session   = nullptr;
-    LIBSSH2_SFTP    *sftp      = nullptr;
-    QString          remotePath = "/";
+    LIBSSH2_SESSION *session     = nullptr;
+    LIBSSH2_SFTP    *sftp        = nullptr;
+    QMutex          *sessionLock = nullptr;
+    QString          remotePath  = "/";
 
 signals:
     void uploadRequested(const QStringList &localPaths);
@@ -145,9 +149,10 @@ private:
     void startNextDownload();
     void runWorker(SFTPWorker *worker);
 
-    SessionPane    *m_pane          = nullptr;
+    SessionPane     *m_pane         = nullptr;
     LIBSSH2_SESSION *m_session      = nullptr;
     LIBSSH2_SFTP    *m_sftp         = nullptr;
+    QMutex          *m_sessionLock  = nullptr;
     QString          m_currentPath;
 
     QLineEdit      *m_pathEdit      = nullptr;

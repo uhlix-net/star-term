@@ -66,7 +66,10 @@ void SessionPane::applySettings(const QString &fontFamily, int fontSize, const Q
 void SessionPane::disconnectSession() {
     if (session) {
         session->stop();
-        session->wait();
+        if (!session->wait(5000)) {
+            session->terminate();
+            session->wait(2000);
+        }
         session->deleteLater();
         session = nullptr;
     }

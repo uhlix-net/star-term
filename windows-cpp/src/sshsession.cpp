@@ -2,7 +2,6 @@
 #include "config.h"
 #include "debug.h"
 
-#include <QHostInfo>
 #include <QMutexLocker>
 #include <QByteArray>
 #include <QString>
@@ -48,7 +47,10 @@ SSHSession::SSHSession(
 
 SSHSession::~SSHSession() {
     stop();
-    wait();
+    if (!wait(5000)) {
+        terminate();
+        wait(2000);
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -96,7 +98,6 @@ void SSHSession::closeSocket() {
 static QString sha256FingerprintHex(const char *key, size_t keyLen) {
     unsigned char digest[SHA256_DIGEST_LENGTH];
     SHA256(reinterpret_cast<const unsigned char*>(key), keyLen, digest);
-    // Base64 like paramiko "SHA256:..."
     QByteArray b64 = QByteArray(reinterpret_cast<const char*>(digest), SHA256_DIGEST_LENGTH)
                          .toBase64(QByteArray::OmitTrailingEquals);
     return "SHA256:" + QString::fromLatin1(b64);
@@ -104,12 +105,12 @@ static QString sha256FingerprintHex(const char *key, size_t keyLen) {
 
 static QString libssh2TypeName(int type) {
     switch (type) {
-    case LIBSSH2_HOSTKEY_TYPE_RSA:   return "ssh-rsa";
-    case LIBSSH2_HOSTKEY_TYPE_DSS:   return "ssh-dss";
-    case LIBSSH2_HOSTKEY_TYPE_ECDSA_256: return "ecdsa-sha2-nistp256";
-    case LIBSSH2_HOSTKEY_TYPE_ECDSA_384: return "ecdsa-sha2-nistp384";
-    case LIBSSH2_HOSTKEY_TYPE_ECDSA_521: return "ecdsa-sha2-nistp521";
-    case LIBSSH2_HOSTKEY_TYPE_ED25519:   return "ssh-ed25519";
+    case LIBSSH2_HOSTKEY_TYPE_RSA:        return "ssh-rsa";
+    case LIBSSH2_HOSTKEY_TYPE_DSS:        return "ssh-dss";
+    case LIBSSH2_HOSTKEY_TYPE_ECDSA_256:  return "ecdsa-sha2-nistp256";
+    case LIBSSH2_HOSTKEY_TYPE_ECDSA_384:  return "ecdsa-sha2-nistp384";
+    case LIBSSH2_HOSTKEY_TYPE_ECDSA_521:  return "ecdsa-sha2-nistp521";
+    case LIBSSH2_HOSTKEY_TYPE_ED25519:    return "ssh-ed25519";
     default: return "unknown";
     }
 }
@@ -136,12 +137,8 @@ bool SSHSession::checkKnownHost(const char *fingerprint, size_t /*len*/,
         return true;
     }
 
-    if (check == LIBSSH2_KNOWNHOST_CHECK_MISMATCH) {
-        // Host key mismatch — emit unknown to let user decide
-    }
-
-    // Unknown host — prompt the user via signal
-    QString fingerprintStr = sha256FingerprintHex(key, keyLen);  // libssh2 provides 32-byte MD5 or SHA1
+    // Unknown or mismatched — prompt user.
+    QString fingerprintStr = sha256FingerprintHex(key, keyLen);
     QString keyType        = libssh2TypeName(type);
 
     {
@@ -164,7 +161,6 @@ bool SSHSession::checkKnownHost(const char *fingerprint, size_t /*len*/,
         return false;
     }
 
-    // Add to known hosts file
     QString hostWithPort = (m_port != 22)
         ? QString("[%1]:%2").arg(m_host).arg(m_port)
         : m_host;
@@ -181,7 +177,49 @@ bool SSHSession::checkKnownHost(const char *fingerprint, size_t /*len*/,
 }
 
 // -----------------------------------------------------------------------
-// run()
+// drainQueues — called from SSH thread only; flushes pending send/resize.
+// Session must be in non-blocking mode on entry; restored on exit.
+// -----------------------------------------------------------------------
+void SSHSession::drainQueues() {
+    QMutexLocker ql(&m_queueMutex);
+
+    while (!m_sendQueue.isEmpty()) {
+        QByteArray data = m_sendQueue.dequeue();
+        ql.unlock();
+        {
+            QMutexLocker sl(&m_sessionMutex);
+            libssh2_session_set_blocking(m_session, 1);
+            const char *ptr = data.constData();
+            size_t rem = static_cast<size_t>(data.size());
+            while (rem > 0) {
+                ssize_t w = libssh2_channel_write(m_channel, ptr, rem);
+                if (w < 0) { rem = 0; break; }
+                ptr += static_cast<size_t>(w);
+                rem -= static_cast<size_t>(w);
+            }
+            libssh2_session_set_blocking(m_session, 0);
+        }
+        ql.relock();
+    }
+
+    if (!m_resizeQueue.isEmpty()) {
+        auto [cols, rows] = m_resizeQueue.dequeue();
+        // Discard any extra queued resizes; only the latest matters.
+        while (!m_resizeQueue.isEmpty())
+            m_resizeQueue.dequeue();
+        ql.unlock();
+        {
+            QMutexLocker sl(&m_sessionMutex);
+            libssh2_session_set_blocking(m_session, 1);
+            libssh2_channel_request_pty_size(m_channel, cols, rows);
+            libssh2_session_set_blocking(m_session, 0);
+        }
+        ql.relock();
+    }
+}
+
+// -----------------------------------------------------------------------
+// run() — SSH thread
 // -----------------------------------------------------------------------
 void SSHSession::run() {
     debugLog(QString("SSH connect: %1@%2:%3").arg(m_username, m_host).arg(m_port));
@@ -198,7 +236,7 @@ void SSHSession::run() {
         return;
     }
 
-    // 2. Init libssh2 session
+    // 2. Init libssh2 session (blocking)
     m_session = libssh2_session_init();
     if (!m_session) {
         emitError("libssh2_session_init failed");
@@ -224,7 +262,6 @@ void SSHSession::run() {
     int    keyType = 0;
     const char *key = libssh2_session_hostkey(m_session, &keyLen, &keyType);
     if (key) {
-        // Use SHA256 fingerprint from raw key bytes
         const char *fingerprint = libssh2_hostkey_hash(m_session, LIBSSH2_HOSTKEY_HASH_SHA256);
         if (!checkKnownHost(fingerprint ? fingerprint : "", 32, keyType, key, keyLen)) {
             emitError(QString("Host key for %1 was not accepted").arg(m_host));
@@ -239,12 +276,12 @@ void SSHSession::run() {
     // 4. Authentication
     QByteArray usernameBytes = m_username.toUtf8();
     if (!m_keyPath.isEmpty()) {
-        QByteArray keyPathBytes        = m_keyPath.toUtf8();
-        QByteArray keyPassphraseBytes  = m_keyPassphrase.toUtf8();
+        QByteArray keyPathBytes       = m_keyPath.toUtf8();
+        QByteArray keyPassphraseBytes = m_keyPassphrase.toUtf8();
         rc = libssh2_userauth_publickey_fromfile(
             m_session,
             usernameBytes.constData(),
-            nullptr, // pubkey (inferred from private key)
+            nullptr,
             keyPathBytes.constData(),
             m_keyPassphrase.isEmpty() ? nullptr : keyPassphraseBytes.constData()
         );
@@ -306,43 +343,62 @@ void SSHSession::run() {
         return;
     }
 
-    // Non-blocking for the read loop
+    // 6. Initialize SFTP subsystem while still in blocking mode.
+    // m_sftp may be nullptr if the server doesn't support SFTP; that's OK.
+    m_sftp = libssh2_sftp_init(m_session);
+
+    // Switch to non-blocking for the read loop.
     libssh2_session_set_blocking(m_session, 0);
 
     debugLog(QString("SSH connected: %1@%2:%3").arg(m_username, m_host).arg(m_port));
     emit connected();
 
-    // 6. Read loop
+    // 7. Read loop — SSH thread only.
+    // Invariant: m_sessionMutex is not held between iterations;
+    // session is in non-blocking mode whenever the mutex is released.
     m_running = true;
     QByteArray buf(4096, '\0');
+
     while (m_running) {
-        ssize_t nread = libssh2_channel_read(
-            m_channel, buf.data(), static_cast<size_t>(buf.size()));
+        drainQueues();
+
+        ssize_t nread;
+        bool    eof = false;
+        {
+            QMutexLocker sl(&m_sessionMutex);
+            nread = libssh2_channel_read(
+                m_channel, buf.data(), static_cast<size_t>(buf.size()));
+            if (nread == 0)
+                eof = libssh2_channel_eof(m_channel) != 0;
+        }
+
         if (nread > 0) {
             emit dataReceived(buf.left(static_cast<int>(nread)));
         } else if (nread == LIBSSH2_ERROR_EAGAIN) {
-            msleep(20);
-        } else if (nread == 0 || libssh2_channel_eof(m_channel)) {
-            break;
+            msleep(10);
         } else {
+            // nread == 0 + EOF, or error
             break;
         }
     }
 
-    // 7. Clean up
-    if (m_sftp) {
-        libssh2_sftp_shutdown(m_sftp);
-        m_sftp = nullptr;
+    // 8. Clean up — all libssh2 calls under the session mutex.
+    {
+        QMutexLocker sl(&m_sessionMutex);
+        libssh2_session_set_blocking(m_session, 1);
+        if (m_sftp) {
+            libssh2_sftp_shutdown(m_sftp);
+            m_sftp = nullptr;
+        }
+        if (m_channel) {
+            libssh2_channel_close(m_channel);
+            libssh2_channel_free(m_channel);
+            m_channel = nullptr;
+        }
+        libssh2_session_disconnect(m_session, "Bye");
+        libssh2_session_free(m_session);
+        m_session = nullptr;
     }
-    if (m_channel) {
-        libssh2_channel_close(m_channel);
-        libssh2_channel_free(m_channel);
-        m_channel = nullptr;
-    }
-    libssh2_session_set_blocking(m_session, 1);
-    libssh2_session_disconnect(m_session, "Bye");
-    libssh2_session_free(m_session);
-    m_session = nullptr;
     closeSocket();
 
     debugLog(QString("SSH connection closed: %1@%2:%3").arg(m_username, m_host).arg(m_port));
@@ -350,46 +406,33 @@ void SSHSession::run() {
 }
 
 // -----------------------------------------------------------------------
-// Public interface
+// Public interface — UI thread
 // -----------------------------------------------------------------------
+
+// Enqueue data; SSH thread writes it in drainQueues().
 void SSHSession::send(const QByteArray &data) {
-    if (!m_channel || !m_session) return;
-    libssh2_session_set_blocking(m_session, 1);
-    libssh2_channel_write(m_channel, data.constData(), static_cast<size_t>(data.size()));
-    libssh2_session_set_blocking(m_session, 0);
+    if (data.isEmpty()) return;
+    QMutexLocker lock(&m_queueMutex);
+    m_sendQueue.enqueue(data);
 }
 
+// Enqueue resize; SSH thread applies it in drainQueues().
 void SSHSession::resize(int cols, int rows) {
     m_cols = cols;
     m_rows = rows;
-    if (m_channel && m_session) {
-        libssh2_session_set_blocking(m_session, 1);
-        libssh2_channel_request_pty_size(m_channel, cols, rows);
-        libssh2_session_set_blocking(m_session, 0);
-    }
+    QMutexLocker lock(&m_queueMutex);
+    m_resizeQueue.enqueue({cols, rows});
 }
 
+// Close the socket to interrupt any blocking libssh2 call, then let the
+// read loop exit naturally via m_running == false.
 void SSHSession::stop() {
     m_running = false;
-    if (m_channel) {
-        libssh2_channel_close(m_channel);
-    }
-    // Unblock any waiting host-key prompt
-    {
-        QMutexLocker lock(&m_hostKeyMutex);
-        m_hostKeyAnswered = true;
-        m_hostKeyAccepted = false;
-        m_hostKeyCond.wakeAll();
-    }
-}
-
-LIBSSH2_SFTP *SSHSession::sftpHandle() {
-    if (!m_session) return nullptr;
-    if (m_sftp) return m_sftp;
-    libssh2_session_set_blocking(m_session, 1);
-    m_sftp = libssh2_sftp_init(m_session);
-    libssh2_session_set_blocking(m_session, 0);
-    return m_sftp;
+    closeSocket();
+    QMutexLocker lock(&m_hostKeyMutex);
+    m_hostKeyAnswered = true;
+    m_hostKeyAccepted = false;
+    m_hostKeyCond.wakeAll();
 }
 
 void SSHSession::acceptHostKey() {
