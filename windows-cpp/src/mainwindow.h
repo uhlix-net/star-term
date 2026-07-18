@@ -11,6 +11,7 @@ class QStackedWidget;
 class QTabWidget;
 
 class MacrosPanel;
+class RdpPane;
 class RemoteFileBrowser;
 class SessionPane;
 class SessionSidebar;
@@ -51,6 +52,7 @@ private slots:
 private:
     void addPane(SessionPane *pane);
     void closePane(SessionPane *pane);
+    void closeRdpPane(RdpPane *pane);
     void startSession(SessionPane *pane, const QJsonObject &params);
     void reconnectPane(SessionPane *pane);
     void onDataToSend(SessionPane *pane, const QByteArray &data);
