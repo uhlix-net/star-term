@@ -12,6 +12,7 @@
 #include "statusbar.h"
 #include "terminalwidget.h"
 #include "theme.h"
+#include "rdppane.h"
 #include "updatechecker.h"
 
 #include <QAction>
@@ -43,9 +44,6 @@
 #include <QCheckBox>
 #include <QPushButton>
 #include <QApplication>
-#include <QDateTime>
-#include <QDir>
-#include <QFile>
 #include <QProcess>
 #include <QTimer>
 
@@ -274,9 +272,18 @@ void MainWindow::closePane(SessionPane *pane) {
     pane->deleteLater();
 }
 
+void MainWindow::closeRdpPane(RdpPane *pane) {
+    int idx = m_tabs->indexOf(pane);
+    if (idx >= 0) m_tabs->removeTab(idx);
+    pane->disconnectRdp();
+    pane->deleteLater();
+}
+
 void MainWindow::onTabCloseRequested(int index) {
     SessionPane *pane = qobject_cast<SessionPane*>(m_tabs->widget(index));
-    if (pane) closePane(pane);
+    if (pane) { closePane(pane); return; }
+    RdpPane *rdp = qobject_cast<RdpPane*>(m_tabs->widget(index));
+    if (rdp) closeRdpPane(rdp);
 }
 
 void MainWindow::toggleMultiExecView(bool checked) {
@@ -400,38 +407,14 @@ void MainWindow::openConnectionDialog() {
 }
 
 void MainWindow::connectSavedSession(const QJsonObject &session) {
-    // RDP sessions: write a temporary .rdp file and open it with mstsc.exe.
-    // This is more reliable than passing /v: on the command line, which some
-    // Windows versions reject when the port is explicit or args are quoted.
+    // RDP sessions open in an embedded tab using the Windows RDP ActiveX control.
     if (session.value("type").toString("ssh") == "rdp") {
-        QString host = session.value("host").toString();
-        int     port = session.value("port").toInt(3389);
-        QString user = session.value("username").toString();
-
-        QString rdpContent =
-            QString("full address:s:%1:%2\r\n"
-                    "username:s:%3\r\n"
-                    "prompt for credentials:i:1\r\n"
-                    "administrative session:i:0\r\n")
-            .arg(host).arg(port).arg(user);
-
-        QString tmpPath = QDir::temp().filePath(
-            QString("starterm_%1.rdp")
-            .arg(QDateTime::currentMSecsSinceEpoch()));
-
-        QFile f(tmpPath);
-        if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            QMessageBox::critical(this, "RDP Error",
-                "Could not write temporary RDP file.");
-            return;
-        }
-        f.write(rdpContent.toUtf8());
-        f.close();
-
-        if (!QProcess::startDetached("mstsc.exe", {tmpPath})) {
-            QMessageBox::critical(this, "RDP Error",
-                "Failed to launch mstsc.exe. Remote Desktop Connection may not be available.");
-        }
+        RdpPane *rdp = new RdpPane(session, this);
+        m_tabs->addTab(rdp, rdp->name);
+        m_tabs->setCurrentWidget(rdp);
+        connect(rdp, &RdpPane::closeRequested, this, [this, rdp]() {
+            closeRdpPane(rdp);
+        });
         return;
     }
 

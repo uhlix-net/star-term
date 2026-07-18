@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # vcpkg toolchain should be set via -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network AxContainer)
 find_package(OpenSSL REQUIRED)
 find_package(Libssh2 REQUIRED)
 
@@ -23,6 +23,7 @@ set(SOURCES
     src/sshsession.cpp
     src/statsworker.cpp
     src/updatechecker.cpp
+    src/rdppane.cpp
     src/sessionpane.cpp
     src/sidebar.cpp
     src/remotebrowser.cpp
@@ -46,6 +47,7 @@ set(HEADERS
     src/sshsession.h
     src/statsworker.h
     src/updatechecker.h
+    src/rdppane.h
     src/sessionpane.h
     src/sidebar.h
     src/remotebrowser.h
@@ -86,7 +88,7 @@ target_link_libraries(star_term_cpp PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(star_term_cpp PRIVATE ws2_32)
+    target_link_libraries(star_term_cpp PRIVATE ws2_32 Qt6::AxContainer)
 endif()
 
 # After each Windows build: deploy Qt runtime DLLs and copy vcpkg DLLs next
