@@ -19,9 +19,11 @@ signals:
     void closeRequested();
 
 protected:
+    void showEvent(QShowEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
 
 private slots:
+    void connectToHost();
     void pollForWindow();
     void onProcessFinished();
 
@@ -31,8 +33,9 @@ private:
     QProcess       *m_process         = nullptr;
     QString         m_host;
     QString         m_user;
-    QString         m_tmpRdpPath;
-    QString         m_credKey;         // TERMSRV/<host> entry stored in Credential Manager
+    int             m_port            = 3389;
+    QString         m_credKey;
     WId             m_mstscHwnd       = 0;
     QSet<quintptr>  m_existingWindows;
+    bool            m_initialized     = false;
 };
