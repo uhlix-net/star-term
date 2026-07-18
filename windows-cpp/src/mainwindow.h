@@ -15,6 +15,7 @@ class RemoteFileBrowser;
 class SessionPane;
 class SessionSidebar;
 class SystemStatusBar;
+class UpdateChecker;
 
 // Matches main.py MainWindow exactly.
 class MainWindow : public QMainWindow {
@@ -33,6 +34,7 @@ public slots:
     void importSessions();
     void toggleMultiExecView(bool checked);
     void showError(const QString &message);
+    void checkForUpdates();
 
     void connectSession(const QJsonObject &params, const QString &name = QString());
     void connectSavedSession(const QJsonObject &session);
@@ -62,6 +64,7 @@ private:
 
     QList<SessionPane*>  m_panes;
     SessionSidebar      *m_sidebar          = nullptr;
+    UpdateChecker       *m_updateChecker    = nullptr;
     QTabWidget          *m_tabs             = nullptr;
     QWidget             *m_multiexecContainer = nullptr;
     QGridLayout         *m_multiexecLayout  = nullptr;

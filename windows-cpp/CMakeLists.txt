@@ -22,6 +22,7 @@ set(SOURCES
     src/terminalwidget.cpp
     src/sshsession.cpp
     src/statsworker.cpp
+    src/updatechecker.cpp
     src/sessionpane.cpp
     src/sidebar.cpp
     src/remotebrowser.cpp
@@ -44,6 +45,7 @@ set(HEADERS
     src/terminalwidget.h
     src/sshsession.h
     src/statsworker.h
+    src/updatechecker.h
     src/sessionpane.h
     src/sidebar.h
     src/remotebrowser.h

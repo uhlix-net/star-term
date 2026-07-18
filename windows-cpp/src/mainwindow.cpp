@@ -12,6 +12,7 @@
 #include "statusbar.h"
 #include "terminalwidget.h"
 #include "theme.h"
+#include "updatechecker.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -42,6 +43,8 @@
 #include <QCheckBox>
 #include <QPushButton>
 #include <QApplication>
+#include <QProcess>
+#include <QTimer>
 
 static const QString APP_VERSION = "0.2.0";
 
@@ -221,6 +224,20 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     // --- Sidebar signal ---
     connect(m_sidebar, &SessionSidebar::connectRequested,
             this, &MainWindow::connectSavedSession);
+
+    // --- Startup update check (deferred so the window is visible first) ---
+    QJsonObject initSettings = loadSettings();
+    if (initSettings.value("check_updates").toBool(true)) {
+        m_updateChecker = new UpdateChecker(APP_VERSION, this);
+        connect(m_updateChecker, &UpdateChecker::updateAvailable,
+                this, [this](const QString &ver, const QString &/*url*/) {
+            QMessageBox::information(
+                this, "Update Available",
+                QString("Star Term %1 is available on GitHub.\n"
+                        "Visit the Releases page to download the latest installer.").arg(ver));
+        });
+        QTimer::singleShot(1500, m_updateChecker, &UpdateChecker::checkAsync);
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -391,6 +408,21 @@ void MainWindow::openConnectionDialog() {
 }
 
 void MainWindow::connectSavedSession(const QJsonObject &session) {
+    // RDP sessions are launched via mstsc.exe — no terminal pane needed.
+    if (session.value("type").toString("ssh") == "rdp") {
+        QString host = session.value("host").toString();
+        int port = session.value("port").toInt(3389);
+        QString user = session.value("username").toString();
+        QStringList args;
+        args << QString("/v:%1:%2").arg(host).arg(port);
+        if (!user.isEmpty()) args << QString("/u:%1").arg(user);
+        if (!QProcess::startDetached("mstsc.exe", args)) {
+            QMessageBox::critical(this, "RDP Error",
+                "Failed to launch mstsc.exe. Remote Desktop Connection may not be available.");
+        }
+        return;
+    }
+
     QString keyPath, keyPassphrase, password;
     QJsonObject settings = loadSettings();
 

@@ -279,6 +279,44 @@ QIcon Icons::settingsIcon(int size) {
 }
 
 // -----------------------------------------------------------------------
+// sshIcon  — green terminal (same shape as terminalIcon)
+// -----------------------------------------------------------------------
+QIcon Icons::sshIcon(int size) {
+    return terminalIcon(size);
+}
+
+// -----------------------------------------------------------------------
+// rdpIcon  — blue monitor with two mini windows in the screen area
+// -----------------------------------------------------------------------
+QIcon Icons::rdpIcon(int size) {
+    QPixmap pm = makePixmap(size);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(Qt::NoPen);
+
+    // Monitor bezel
+    p.setBrush(ACCENT_BLUE);
+    p.drawRoundedRect(QRectF(1, size * 0.06, size - 2, size * 0.66), 2, 2);
+
+    // Screen area (dark fill)
+    p.setBrush(DARK_BG);
+    p.drawRect(QRectF(size * 0.08, size * 0.13, size * 0.84, size * 0.52));
+
+    // Stand
+    p.setBrush(ACCENT_BLUE);
+    p.drawRect(QRectF(size * 0.42, size * 0.72, size * 0.16, size * 0.14));
+    p.drawRoundedRect(QRectF(size * 0.22, size * 0.84, size * 0.56, size * 0.06), 2, 2);
+
+    // Two small windows on the screen (remote-desktop hint)
+    p.setBrush(ICON_FG_MUTED);
+    p.drawRoundedRect(QRectF(size * 0.13, size * 0.19, size * 0.31, size * 0.2),  1, 1);
+    p.drawRoundedRect(QRectF(size * 0.52, size * 0.26, size * 0.31, size * 0.2),  1, 1);
+
+    p.end();
+    return QIcon(pm);
+}
+
+// -----------------------------------------------------------------------
 // downArrowPixmap
 // -----------------------------------------------------------------------
 QPixmap Icons::downArrowPixmap(const QColor &color, int size) {
