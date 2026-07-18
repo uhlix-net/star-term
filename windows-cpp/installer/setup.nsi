@@ -67,6 +67,12 @@ FunctionEnd
 Section "Application" SecApp
   SetRegView 64
 
+  ; Remove old "Star Term C++ Edition" Start menu entries left by previous installs.
+  Delete "$SMPROGRAMS\Star Term C++ Edition\Star Term C++ Edition.lnk"
+  Delete "$SMPROGRAMS\Star Term C++ Edition\Uninstall Star Term C++ Edition.lnk"
+  RMDir  "$SMPROGRAMS\Star Term C++ Edition"
+  Delete "$DESKTOP\Star Term C++ Edition.lnk"
+
 ; --- Application binary + all runtime files (Qt, plugins, vcpkg DLLs) ---
   ; Packages everything windeployqt + vcpkg staged in build\Release.
   SetOutPath "$INSTDIR"
