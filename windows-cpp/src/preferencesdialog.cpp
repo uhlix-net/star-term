@@ -15,7 +15,6 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
-#include <QRadioButton>
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -35,7 +34,6 @@ PreferencesDialog::PreferencesDialog(
     tabs->addTab(buildTerminalTab(fontFamily, fontSize, cursorStyle), "Terminal");
     tabs->addTab(buildSSHTab(),                                       "SSH Key");
     tabs->addTab(buildUpdatesTab(),                                   "Updates");
-    tabs->addTab(buildRdpTab(),                                       "RDP");
 
     QDialogButtonBox *buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
@@ -72,10 +70,9 @@ QWidget *PreferencesDialog::buildGeneralTab(const QString &themeName) {
 
 QJsonObject PreferencesDialog::getGeneralSettings() const {
     QJsonObject s;
-    s["theme"]           = m_themeCombo->currentText().toLower();
-    s["debug"]           = m_debugCheck->isChecked();
-    s["check_updates"]   = m_checkUpdatesCheck->isChecked();
-    s["rdp_resize_mode"] = m_rdpScaleRadio->isChecked() ? QString("scale") : QString("scroll");
+    s["theme"]         = m_themeCombo->currentText().toLower();
+    s["debug"]         = m_debugCheck->isChecked();
+    s["check_updates"] = m_checkUpdatesCheck->isChecked();
     return s;
 }
 
@@ -186,38 +183,3 @@ QJsonObject PreferencesDialog::getTerminalSettings() const {
     return s;
 }
 
-// -----------------------------------------------------------------------
-QWidget *PreferencesDialog::buildRdpTab() {
-    QWidget *w = new QWidget;
-    QJsonObject settings = loadSettings();
-    QString mode = settings.value("rdp_resize_mode").toString("scroll");
-
-    m_rdpScaleRadio  = new QRadioButton("Scale to fit");
-    m_rdpScrollRadio = new QRadioButton("Fixed resolution with scroll bars");
-
-    if (mode == "scale") m_rdpScaleRadio->setChecked(true);
-    else                 m_rdpScrollRadio->setChecked(true);
-
-    QLabel *scaleNote = new QLabel(
-        "The mstsc window tracks the tab size. The session resolution\n"
-        "is set at connect time; content scrolls if the tab is made smaller.");
-    scaleNote->setObjectName("mutedNote");
-    scaleNote->setWordWrap(true);
-
-    QLabel *scrollNote = new QLabel(
-        "Session resolution is fixed at connect time. Qt scroll bars\n"
-        "appear when the tab is made smaller than the session.");
-    scrollNote->setObjectName("mutedNote");
-    scrollNote->setWordWrap(true);
-
-    QVBoxLayout *layout = new QVBoxLayout(w);
-    layout->addWidget(new QLabel("Window resize behavior:"));
-    layout->addSpacing(4);
-    layout->addWidget(m_rdpScaleRadio);
-    layout->addWidget(scaleNote);
-    layout->addSpacing(8);
-    layout->addWidget(m_rdpScrollRadio);
-    layout->addWidget(scrollNote);
-    layout->addStretch();
-    return w;
-}
