@@ -6,13 +6,10 @@
 class QCheckBox;
 class QPushButton;
 class QLabel;
+class RemoteStatsWorker;
 class SSHSession;
 class TerminalWidget;
 class CwdTracker;
-
-// Matches session_pane.py exactly.
-// Note: RemoteStatsWorker is not included (libssh2 doesn't have exec_command
-// equivalent easily; stats poll is omitted from the C++ port for simplicity).
 
 class SessionPane : public QWidget {
     Q_OBJECT
@@ -28,19 +25,26 @@ public:
 
     void applySettings(const QString &fontFamily, int fontSize, const QString &cursorStyle);
     void disconnectSession();
+    void startStatsWorker();
+    void stopStatsWorker();
 
     QString     name;
-    SSHSession *session     = nullptr;
+    SSHSession *session          = nullptr;
     QJsonObject connectionParams;
-    CwdTracker *cwdTracker  = nullptr;
+    QJsonObject lastStats;          // last received stats; empty = not yet available
+    CwdTracker *cwdTracker       = nullptr;
 
-    TerminalWidget *terminal       = nullptr;
+    TerminalWidget *terminal        = nullptr;
     QCheckBox      *excludeCheckbox = nullptr;
-    QPushButton    *reconnectBtn   = nullptr;
+    QPushButton    *reconnectBtn    = nullptr;
 
 signals:
     void dataToSend(const QByteArray &data);
     void sizeChanged(int cols, int rows);
     void closeRequested();
     void reconnectRequested();
+    void statsUpdated(const QJsonObject &stats);
+
+private:
+    RemoteStatsWorker *m_statsWorker = nullptr;
 };

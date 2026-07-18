@@ -1,4 +1,5 @@
 #include "sessionpane.h"
+#include "statsworker.h"
 #include "terminalwidget.h"
 #include "sshsession.h"
 #include "remotebrowser.h"
@@ -63,7 +64,31 @@ void SessionPane::applySettings(const QString &fontFamily, int fontSize, const Q
     terminal->applySettings(fontFamily, fontSize, cursorStyle);
 }
 
+void SessionPane::startStatsWorker() {
+    if (!session || m_statsWorker) return;
+    m_statsWorker = new RemoteStatsWorker(
+        session->rawSession(), session->sessionLock(), this);
+    connect(m_statsWorker, &RemoteStatsWorker::statsReady,
+            this, [this](const QJsonObject &stats) {
+        lastStats = stats;
+        emit statsUpdated(stats);
+    });
+    m_statsWorker->start();
+}
+
+void SessionPane::stopStatsWorker() {
+    if (!m_statsWorker) return;
+    m_statsWorker->stop();
+    if (!m_statsWorker->wait(3000))
+        m_statsWorker->terminate();
+    m_statsWorker->wait(1000);
+    delete m_statsWorker;
+    m_statsWorker = nullptr;
+    lastStats = {};
+}
+
 void SessionPane::disconnectSession() {
+    stopStatsWorker();
     if (session) {
         session->stop();
         if (!session->wait(5000)) {

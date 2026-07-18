@@ -21,6 +21,7 @@ set(SOURCES
     src/vt100.cpp
     src/terminalwidget.cpp
     src/sshsession.cpp
+    src/statsworker.cpp
     src/sessionpane.cpp
     src/sidebar.cpp
     src/remotebrowser.cpp
@@ -42,6 +43,7 @@ set(HEADERS
     src/vt100.h
     src/terminalwidget.h
     src/sshsession.h
+    src/statsworker.h
     src/sessionpane.h
     src/sidebar.h
     src/remotebrowser.h
