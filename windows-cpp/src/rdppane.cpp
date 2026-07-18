@@ -27,7 +27,8 @@ static BOOL CALLBACK findRdpSession(HWND hwnd, LPARAM lp)
 {
     auto *d = reinterpret_cast<RdpEnumData *>(lp);
     if (d->exclude->contains(reinterpret_cast<quintptr>(hwnd))) return TRUE;
-    if (!IsWindowVisible(hwnd)) return TRUE;
+    // Do NOT skip hidden windows — mstsc is launched hidden to prevent the
+    // standalone-window flash, so TscShellContainerClass arrives hidden.
     WCHAR cls[256] = {};
     GetClassNameW(hwnd, cls, 256);
     if (_wcsicmp(cls, L"TscShellContainerClass") == 0) { d->found = hwnd; return FALSE; }
@@ -151,10 +152,11 @@ void RdpPane::connectToHost()
     m_existingWindows.clear();
     EnumWindows(snapshotRdpSessions, reinterpret_cast<LPARAM>(&m_existingWindows));
 
-    // Physical-pixel dimensions for the session resolution and Win32 calls.
-    const qreal dpr = devicePixelRatioF();
-    m_sessionPw = qRound(width()  * dpr);
-    m_sessionPh = qRound(height() * dpr);
+    // Session resolution in logical (device-independent) pixels so that mstsc's
+    // own DPI scaling maps remote pixels 1:1 with local logical pixels.
+    // SetWindowPos calls later convert to physical pixels via devicePixelRatioF().
+    m_sessionPw = width();
+    m_sessionPh = height();
 
     // Both modes use command-line launch only — no .rdp file.  Passing a .rdp
     // file can cause mstsc to route through an existing mstsc instance (shell
@@ -167,6 +169,16 @@ void RdpPane::connectToHost()
 
     m_process = new QProcess(this);
     connect(m_process, &QProcess::finished, this, &RdpPane::onProcessFinished);
+
+    // Launch mstsc hidden so it never appears as a standalone window.
+    // The TscShellContainerClass HWND is found while still hidden and shown
+    // only after being embedded in the tab — eliminating the window flash.
+    m_process->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *a) {
+        a->flags |= CREATE_NO_WINDOW;
+        a->startupInfo->dwFlags |= STARTF_USESHOWWINDOW;
+        a->startupInfo->wShowWindow = SW_HIDE;
+    });
+
     m_process->start("mstsc.exe", args);
 
     if (!m_process->waitForStarted(5000)) {
@@ -176,7 +188,7 @@ void RdpPane::connectToHost()
 
     m_pollTimer = new QTimer(this);
     connect(m_pollTimer, &QTimer::timeout, this, &RdpPane::pollForWindow);
-    m_pollTimer->start(500);
+    m_pollTimer->start(100);   // 100 ms — faster detection reduces any residual flash
     QTimer::singleShot(300000, m_pollTimer, &QTimer::stop);
 }
 
@@ -253,10 +265,9 @@ void RdpPane::pollForWindow()
         // Scroll mode: embed inside the scroll container at the fixed session
         // resolution.  The QScrollArea provides Qt scroll bars when the tab
         // is smaller than the session; no blank area when it is larger.
+        // m_sessionPw/Ph are in logical pixels; SetWindowPos needs physical.
         const qreal dpr = devicePixelRatioF();
-        const int lw = qRound(m_sessionPw / dpr);
-        const int lh = qRound(m_sessionPh / dpr);
-        m_scrollContainer->resize(lw, lh);
+        m_scrollContainer->resize(m_sessionPw, m_sessionPh);  // logical
 
         m_scrollArea->show();
         m_status->hide();
@@ -267,7 +278,7 @@ void RdpPane::pollForWindow()
         m_mstscHwnd = reinterpret_cast<WId>(hwnd);
 
         SetWindowPos(hwnd, HWND_TOP, 0, 0,
-                     m_sessionPw, m_sessionPh,
+                     qRound(m_sessionPw * dpr), qRound(m_sessionPh * dpr),
                      SWP_FRAMECHANGED | SWP_SHOWWINDOW);
     }
 
@@ -287,10 +298,11 @@ void RdpPane::resizeEvent(QResizeEvent *event)
     // Scale mode: resize the mstsc HWND to follow the tab, capped at the
     // original session resolution to prevent mstsc from going blank when the
     // window is stretched beyond the session size.
+    // m_sessionPw/Ph are logical; convert both sides to physical for the cap.
     HWND hwnd = reinterpret_cast<HWND>(m_mstscHwnd);
     const qreal dpr = devicePixelRatioF();
-    int newW = qMin(qRound(event->size().width()  * dpr), m_sessionPw);
-    int newH = qMin(qRound(event->size().height() * dpr), m_sessionPh);
+    int newW = qMin(qRound(event->size().width()  * dpr), qRound(m_sessionPw * dpr));
+    int newH = qMin(qRound(event->size().height() * dpr), qRound(m_sessionPh * dpr));
     SetWindowPos(hwnd, nullptr, 0, 0, newW, newH, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
