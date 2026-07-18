@@ -50,6 +50,7 @@
 static const QString APP_VERSION = "0.3.0";
 
 static const QString UPDATE_HISTORY = R"(Version 0.3.0
+
 - RDP sessions embedded in main window tab via Win32 window embedding
 - Right-click copy/paste with mouse drag selection in terminal
 - SSH and RDP session type icons in the session sidebar

@@ -128,13 +128,20 @@ void RdpPane::connectToHost()
 
     // Launch mstsc.exe with command-line flags only — no .rdp file — to avoid
     // the "unsigned connection file" caution dialog that mstsc shows for any
-    // .rdp file without a digital signature.  Pass the current widget dimensions
-    // as the initial session resolution; dynamic resolution updates happen
-    // automatically via WM_SIZE when the window is resized after embedding.
+    // .rdp file without a digital signature.
+    // Use PHYSICAL pixels (logical * DPR) for /w and /h: mstsc interprets
+    // these as the actual session resolution, and Win32 SetWindowPos also
+    // operates in physical pixels.  Using logical pixels on a HiDPI monitor
+    // (e.g. 150% = DPR 1.5) would make the embedded window fill only ~67%
+    // of the tab, leaving a blank strip.
+    const qreal dpr = devicePixelRatioF();
+    const int   pw  = qRound(width()  * dpr);
+    const int   ph  = qRound(height() * dpr);
+
     QStringList args;
     args << QString("/v:%1:%2").arg(m_host).arg(m_port);
-    if (width() > 0 && height() > 0)
-        args << QString("/w:%1").arg(width()) << QString("/h:%1").arg(height());
+    if (pw > 0 && ph > 0)
+        args << QString("/w:%1").arg(pw) << QString("/h:%1").arg(ph);
 
     m_process = new QProcess(this);
     connect(m_process, &QProcess::finished, this, &RdpPane::onProcessFinished);
@@ -198,7 +205,9 @@ void RdpPane::pollForWindow()
     SetParent(hwnd, ours);
     m_mstscHwnd = reinterpret_cast<WId>(hwnd);
 
-    SetWindowPos(hwnd, HWND_TOP, 0, 0, width(), height(),
+    const qreal dpr2 = devicePixelRatioF();
+    SetWindowPos(hwnd, HWND_TOP, 0, 0,
+                 qRound(width() * dpr2), qRound(height() * dpr2),
                  SWP_FRAMECHANGED | SWP_SHOWWINDOW);
 
     m_status->hide();
@@ -217,8 +226,10 @@ void RdpPane::resizeEvent(QResizeEvent *event)
     // to avoid sending WM_SIZE(0,0) to mstsc, which can destabilise the session.
     if (m_mstscHwnd && event->size().width() > 0 && event->size().height() > 0) {
         HWND hwnd = reinterpret_cast<HWND>(m_mstscHwnd);
+        const qreal dpr = devicePixelRatioF();
         SetWindowPos(hwnd, nullptr, 0, 0,
-                     event->size().width(), event->size().height(),
+                     qRound(event->size().width()  * dpr),
+                     qRound(event->size().height() * dpr),
                      SWP_NOZORDER | SWP_NOACTIVATE);
     }
 }
