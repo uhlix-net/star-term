@@ -87,10 +87,29 @@ if(WIN32)
     target_link_libraries(star_term_cpp PRIVATE ws2_32)
 endif()
 
-# Copy Qt DLLs on Windows for in-place running
+# After each Windows build: deploy Qt runtime DLLs and copy vcpkg DLLs next
+# to the exe so the output directory is always self-contained and installer-ready.
 if(WIN32)
+    # Locate windeployqt from the same bin dir as qmake (works regardless of
+    # how Qt6_DIR was specified on the cmake command line).
+    get_target_property(QT_QMAKE_EXECUTABLE Qt6::qmake IMPORTED_LOCATION)
+    get_filename_component(QT_BIN_DIR "${QT_QMAKE_EXECUTABLE}" DIRECTORY)
+
+    # 1. windeployqt — copies Qt DLLs, plugins, translations next to the exe.
     add_custom_command(TARGET star_term_cpp POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E echo "Build complete: $<TARGET_FILE:star_term_cpp>"
+        COMMAND "${QT_BIN_DIR}/windeployqt.exe"
+            "$<IF:$<CONFIG:Debug>,--debug,--release>"
+            "$<TARGET_FILE:star_term_cpp>"
+        COMMENT "Deploying Qt runtime DLLs..."
+        VERBATIM
+    )
+
+    # 2. vcpkg runtime DLLs (libssh2, OpenSSL, zlib, etc.)
+    add_custom_command(TARGET star_term_cpp POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_BINARY_DIR}/vcpkg_installed/x64-windows/bin"
+            "$<TARGET_FILE_DIR:star_term_cpp>"
+        COMMENT "Copying vcpkg runtime DLLs..."
     )
 endif()
 
