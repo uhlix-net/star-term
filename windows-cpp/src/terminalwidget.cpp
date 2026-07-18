@@ -5,6 +5,7 @@
 #include <QClipboard>
 #include <QFontMetrics>
 #include <QKeyEvent>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScrollBar>
@@ -163,7 +164,115 @@ void TerminalWidget::wheelEvent(QWheelEvent *event) {
 
 void TerminalWidget::mousePressEvent(QMouseEvent *event) {
     setFocus();
+    if (event->button() == Qt::LeftButton) {
+        auto [col, row] = cellFromPos(event->pos());
+        m_selAnchorRow = row;
+        m_selAnchorCol = col;
+        m_selEndRow    = row;
+        m_selEndCol    = col;
+        m_selecting    = true;
+        m_selActive    = false;
+        update();
+    } else if (event->button() == Qt::RightButton) {
+        QMenu menu(this);
+        QAction *copyAct  = menu.addAction("Copy");
+        QAction *pasteAct = menu.addAction("Paste");
+        copyAct->setEnabled(m_selActive);
+        QAction *chosen = menu.exec(mapToGlobal(event->pos()));
+        if (chosen == copyAct) {
+            QApplication::clipboard()->setText(selectedText());
+        } else if (chosen == pasteAct) {
+            QString text = QApplication::clipboard()->text();
+            if (!text.isEmpty()) emit dataToSend(text.toUtf8());
+        }
+    }
     QWidget::mousePressEvent(event);
+}
+
+void TerminalWidget::mouseMoveEvent(QMouseEvent *event) {
+    if (m_selecting && (event->buttons() & Qt::LeftButton)) {
+        auto [col, row] = cellFromPos(event->pos());
+        if (col != m_selEndCol || row != m_selEndRow) {
+            m_selEndRow = row;
+            m_selEndCol = col;
+            m_selActive = true;
+            update();
+        }
+    }
+    QWidget::mouseMoveEvent(event);
+}
+
+void TerminalWidget::mouseReleaseEvent(QMouseEvent *event) {
+    if (event->button() == Qt::LeftButton) {
+        m_selecting = false;
+        // A zero-size drag (just a click) is not a selection
+        if (m_selAnchorRow == m_selEndRow && m_selAnchorCol == m_selEndCol)
+            m_selActive = false;
+        update();
+    }
+    QWidget::mouseReleaseEvent(event);
+}
+
+QPair<int,int> TerminalWidget::cellFromPos(const QPoint &pos) const {
+    int col = (pos.x() - PADDING) / m_charWidth;
+    int row = (pos.y() - PADDING) / m_charHeight;
+    col = qBound(0, col, m_screen.cols() - 1);
+    row = qBound(0, row, m_screen.rows() - 1);
+    return {col, row};
+}
+
+bool TerminalWidget::cellInSelection(int col, int row) const {
+    if (!m_selActive) return false;
+
+    // Normalise anchor vs end into (sr,sc) → (er,ec) top-to-bottom order
+    int sr = m_selAnchorRow, sc = m_selAnchorCol;
+    int er = m_selEndRow,    ec = m_selEndCol;
+    if (sr > er || (sr == er && sc > ec)) {
+        std::swap(sr, er);
+        std::swap(sc, ec);
+    }
+
+    if (row < sr || row > er) return false;
+    if (row == sr && col < sc) return false;
+    if (row == er && col > ec) return false;
+    return true;
+}
+
+QString TerminalWidget::selectedText() const {
+    if (!m_selActive) return {};
+
+    int sr = m_selAnchorRow, sc = m_selAnchorCol;
+    int er = m_selEndRow,    ec = m_selEndCol;
+    if (sr > er || (sr == er && sc > ec)) {
+        std::swap(sr, er);
+        std::swap(sc, ec);
+    }
+
+    int offset   = m_screen.scrollOffset();
+    int absStart = m_screen.historyTop() - offset;
+
+    QString text;
+    for (int y = sr; y <= er; ++y) {
+        int startC = (y == sr) ? sc : 0;
+        int endC   = (y == er) ? ec : m_screen.cols() - 1;
+        QString line;
+        for (int x = startC; x <= endC; ++x) {
+            Cell cell = (offset > 0)
+                ? m_screen.historyCell(x, absStart + y)
+                : m_screen.cellAt(x, y);
+            line += cell.ch;
+        }
+        while (line.endsWith(' ')) line.chop(1);
+        if (y < er) text += line + '\n';
+        else        text += line;
+    }
+    return text;
+}
+
+void TerminalWidget::clearSelection() {
+    m_selActive = false;
+    m_selecting = false;
+    update();
 }
 
 // -----------------------------------------------------------------------
@@ -206,12 +315,14 @@ void TerminalWidget::paintEvent(QPaintEvent * /*event*/) {
             QString bgColor = paletteColor(cell.bg);
             if (bgColor.isEmpty()) bgColor = cell.bg.startsWith('#') ? cell.bg : DEFAULT_BG;
 
-            if (cell.reverse) std::swap(fgColor, bgColor);
+            bool selected = cellInSelection(x, y);
+            if (selected) std::swap(fgColor, bgColor);
+            else if (cell.reverse) std::swap(fgColor, bgColor);
 
             int px = PADDING + x * m_charWidth;
             int py = PADDING + y * m_charHeight;
 
-            if (bgColor != DEFAULT_BG)
+            if (selected || bgColor != DEFAULT_BG)
                 painter.fillRect(px, py, m_charWidth, m_charHeight, QColor(bgColor));
 
             if (cell.ch != ' ') {
@@ -282,6 +393,8 @@ void TerminalWidget::keyPressEvent(QKeyEvent *event) {
         event->accept();
         return;
     }
+
+    clearSelection();
 
     QByteArray data = keyToBytes(event);
     if (!data.isEmpty()) emit dataToSend(data);

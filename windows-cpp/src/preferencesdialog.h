@@ -33,11 +33,13 @@ private:
     QWidget *buildGeneralTab(const QString &themeName);
     QWidget *buildTerminalTab(const QString &fontFamily, int fontSize, const QString &cursorStyle);
     QWidget *buildSSHTab();
+    QWidget *buildUpdatesTab();
 
-    QComboBox     *m_themeCombo   = nullptr;
-    QCheckBox     *m_debugCheck   = nullptr;
-    QFontComboBox *m_fontCombo    = nullptr;
-    QComboBox     *m_sizeCombo    = nullptr;
-    QComboBox     *m_cursorCombo  = nullptr;
-    QLineEdit     *m_keyPathEdit  = nullptr;
+    QComboBox     *m_themeCombo        = nullptr;
+    QCheckBox     *m_debugCheck        = nullptr;
+    QFontComboBox *m_fontCombo         = nullptr;
+    QComboBox     *m_sizeCombo         = nullptr;
+    QComboBox     *m_cursorCombo       = nullptr;
+    QLineEdit     *m_keyPathEdit       = nullptr;
+    QCheckBox     *m_checkUpdatesCheck = nullptr;
 };

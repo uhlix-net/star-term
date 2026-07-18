@@ -30,9 +30,10 @@ PreferencesDialog::PreferencesDialog(
     setWindowTitle("Preferences");
 
     QTabWidget *tabs = new QTabWidget;
-    tabs->addTab(buildGeneralTab(themeName),                   "General");
+    tabs->addTab(buildGeneralTab(themeName),                        "General");
     tabs->addTab(buildTerminalTab(fontFamily, fontSize, cursorStyle), "Terminal");
-    tabs->addTab(buildSSHTab(),                                "SSH Key");
+    tabs->addTab(buildSSHTab(),                                     "SSH Key");
+    tabs->addTab(buildUpdatesTab(),                                 "Updates");
 
     QDialogButtonBox *buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
@@ -69,8 +70,9 @@ QWidget *PreferencesDialog::buildGeneralTab(const QString &themeName) {
 
 QJsonObject PreferencesDialog::getGeneralSettings() const {
     QJsonObject s;
-    s["theme"] = m_themeCombo->currentText().toLower();
-    s["debug"] = m_debugCheck->isChecked();
+    s["theme"]         = m_themeCombo->currentText().toLower();
+    s["debug"]         = m_debugCheck->isChecked();
+    s["check_updates"] = m_checkUpdatesCheck->isChecked();
     return s;
 }
 
@@ -117,6 +119,27 @@ void PreferencesDialog::removeKey() {
     settings.remove("ssh_key_path");
     saveSettings(settings);
     m_keyPathEdit->clear();
+}
+
+// -----------------------------------------------------------------------
+QWidget *PreferencesDialog::buildUpdatesTab() {
+    QWidget *w = new QWidget;
+    QJsonObject settings = loadSettings();
+
+    m_checkUpdatesCheck = new QCheckBox("Check for updates on startup");
+    m_checkUpdatesCheck->setChecked(settings.value("check_updates").toBool(true));
+
+    QLabel *note = new QLabel(
+        "When enabled, Star Term checks GitHub releases on launch\n"
+        "and notifies you if a newer version is available.");
+    note->setObjectName("mutedNote");
+    note->setWordWrap(true);
+
+    QVBoxLayout *layout = new QVBoxLayout(w);
+    layout->addWidget(m_checkUpdatesCheck);
+    layout->addWidget(note);
+    layout->addStretch();
+    return w;
 }
 
 // -----------------------------------------------------------------------

@@ -37,14 +37,28 @@ protected:
     void  resizeEvent(QResizeEvent *event) override;
     void  wheelEvent(QWheelEvent *event) override;
     void  mousePressEvent(QMouseEvent *event) override;
+    void  mouseMoveEvent(QMouseEvent *event) override;
+    void  mouseReleaseEvent(QMouseEvent *event) override;
 
 private slots:
     void onScrollbarChanged(int value);
 
 private:
-    void setFont_(const QString &fontFamily, int fontSize);
-    void updateScrollbar();
+    void       setFont_(const QString &fontFamily, int fontSize);
+    void       updateScrollbar();
     QByteArray keyToBytes(QKeyEvent *event);
+
+    // Mouse selection helpers
+    QPair<int,int> cellFromPos(const QPoint &pos) const;
+    bool           cellInSelection(int col, int row) const;
+    QString        selectedText() const;
+    void           clearSelection();
+
+    // Selection state (all in display-row coords, 0..rows-1)
+    bool m_selecting   = false;
+    bool m_selActive   = false;
+    int  m_selAnchorRow = 0, m_selAnchorCol = 0;
+    int  m_selEndRow    = 0, m_selEndCol    = 0;
 
     VT100Screen m_screen;
     QString     m_cursorStyle;

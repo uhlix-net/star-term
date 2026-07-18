@@ -33,6 +33,8 @@ QIcon    refreshIcon(int size = 24);
 QIcon    sessionsIcon(int size = 24);
 QIcon    macrosIcon(int size = 24);
 QIcon    settingsIcon(int size = 24);
+QIcon    sshIcon(int size = 24);
+QIcon    rdpIcon(int size = 24);
 QPixmap  downArrowPixmap(const QColor &color, int size = 10);
 
 } // namespace Icons
