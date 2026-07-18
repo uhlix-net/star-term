@@ -21,8 +21,9 @@ UpdateChecker::UpdateChecker(const QString &currentVersion, QObject *parent)
 }
 
 void UpdateChecker::checkAsync() {
-    QNetworkRequest req(QUrl(RELEASES_URL));
-    req.setHeader(QNetworkRequest::UserAgentHeader, "star-term-update-check");
+    QNetworkRequest req;
+    req.setUrl(QUrl(QString::fromLatin1(RELEASES_URL)));
+    req.setRawHeader("User-Agent", "star-term-update-check");
     m_nam->get(req);
 }
 
