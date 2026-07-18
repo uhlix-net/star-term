@@ -156,11 +156,13 @@ void RdpPane::connectToHost()
     m_existingWindows.clear();
     EnumWindows(snapshotRdpSessions, reinterpret_cast<LPARAM>(&m_existingWindows));
 
-    // Session resolution in logical (device-independent) pixels so that mstsc's
-    // own DPI scaling maps remote pixels 1:1 with local logical pixels.
-    // SetWindowPos calls later convert to physical pixels via devicePixelRatioF().
-    m_sessionPw = width();
-    m_sessionPh = height();
+    // Session resolution in physical pixels so the remote desktop exactly fills
+    // the HWND — mstsc renders its content at the pixel dimensions passed via
+    // /w and /h, so using physical (not logical) pixels avoids blank strips
+    // when the HWND is larger than the session resolution.
+    const qreal dpr = devicePixelRatioF();
+    m_sessionPw = qRound(width()  * dpr);
+    m_sessionPh = qRound(height() * dpr);
 
     // Both modes use command-line launch only — no .rdp file.  Passing a .rdp
     // file can cause mstsc to route through an existing mstsc instance (shell
@@ -264,9 +266,9 @@ void RdpPane::pollForWindow()
         // Scroll mode: embed inside the scroll container at the fixed session
         // resolution.  The QScrollArea provides Qt scroll bars when the tab
         // is smaller than the session; no blank area when it is larger.
-        // m_sessionPw/Ph are in logical pixels; SetWindowPos needs physical.
+        // m_sessionPw/Ph are physical pixels; the container uses logical pixels.
         const qreal dpr = devicePixelRatioF();
-        m_scrollContainer->resize(m_sessionPw, m_sessionPh);  // logical
+        m_scrollContainer->resize(qRound(m_sessionPw / dpr), qRound(m_sessionPh / dpr));
 
         m_scrollArea->show();
         m_status->hide();
@@ -277,7 +279,7 @@ void RdpPane::pollForWindow()
         m_mstscHwnd = reinterpret_cast<WId>(hwnd);
 
         SetWindowPos(hwnd, HWND_TOP, 0, 0,
-                     qRound(m_sessionPw * dpr), qRound(m_sessionPh * dpr),
+                     m_sessionPw, m_sessionPh,
                      SWP_FRAMECHANGED | SWP_SHOWWINDOW);
     }
 
@@ -297,11 +299,11 @@ void RdpPane::resizeEvent(QResizeEvent *event)
     // Scale mode: resize the mstsc HWND to follow the tab, capped at the
     // original session resolution to prevent mstsc from going blank when the
     // window is stretched beyond the session size.
-    // m_sessionPw/Ph are logical; convert both sides to physical for the cap.
+    // m_sessionPw/Ph are already physical pixels; use them directly as the cap.
     HWND hwnd = reinterpret_cast<HWND>(m_mstscHwnd);
     const qreal dpr = devicePixelRatioF();
-    int newW = qMin(qRound(event->size().width()  * dpr), qRound(m_sessionPw * dpr));
-    int newH = qMin(qRound(event->size().height() * dpr), qRound(m_sessionPh * dpr));
+    int newW = qMin(qRound(event->size().width()  * dpr), m_sessionPw);
+    int newH = qMin(qRound(event->size().height() * dpr), m_sessionPh);
     SetWindowPos(hwnd, nullptr, 0, 0, newW, newH, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
