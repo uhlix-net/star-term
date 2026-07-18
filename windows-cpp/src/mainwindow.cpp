@@ -43,9 +43,9 @@
 #include <QPushButton>
 #include <QApplication>
 
-static const QString APP_VERSION = "1.0.0";
+static const QString APP_VERSION = "0.2.0";
 
-static const QString UPDATE_HISTORY = R"(Version 1.0.0 - C++ Edition
+static const QString UPDATE_HISTORY = R"(Version 0.2.0 - C++ Edition
 
 - Complete C++ Qt6 port of the Python/PySide6 Star Term application
 - VT100 terminal emulation using a custom C++ parser (replaces pyte)
