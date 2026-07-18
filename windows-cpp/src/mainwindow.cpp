@@ -226,18 +226,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
             this, &MainWindow::connectSavedSession);
 
     // --- Startup update check (deferred so the window is visible first) ---
-    QJsonObject initSettings = loadSettings();
-    if (initSettings.value("check_updates").toBool(true)) {
-        m_updateChecker = new UpdateChecker(APP_VERSION, this);
-        connect(m_updateChecker, &UpdateChecker::updateAvailable,
-                this, [this](const QString &ver, const QString &/*url*/) {
-            QMessageBox::information(
-                this, "Update Available",
-                QString("Star Term %1 is available on GitHub.\n"
-                        "Visit the Releases page to download the latest installer.").arg(ver));
-        });
-        QTimer::singleShot(1500, m_updateChecker, &UpdateChecker::checkAsync);
-    }
+    QTimer::singleShot(1500, this, &MainWindow::checkForUpdates);
 }
 
 // -----------------------------------------------------------------------
@@ -662,6 +651,22 @@ void MainWindow::showUpdateHistoryDialog() {
 void MainWindow::showLicenseDialog() {
     LicenseDialog dlg(this);
     dlg.exec();
+}
+
+void MainWindow::checkForUpdates() {
+    QJsonObject settings = loadSettings();
+    if (!settings.value("check_updates").toBool(true)) return;
+    if (!m_updateChecker) {
+        m_updateChecker = new UpdateChecker(APP_VERSION, this);
+        connect(m_updateChecker, &UpdateChecker::updateAvailable,
+                this, [this](const QString &ver, const QString &) {
+            QMessageBox::information(
+                this, "Update Available",
+                QString("Star Term %1 is available on GitHub.\n"
+                        "Visit the Releases page to download the latest installer.").arg(ver));
+        });
+    }
+    m_updateChecker->checkAsync();
 }
 
 void MainWindow::exportSessions() {
