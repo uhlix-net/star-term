@@ -16,6 +16,8 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMimeData>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QTemporaryDir>
@@ -107,55 +109,69 @@ QString CwdTracker::resolve(const QString &arg) {
 // -----------------------------------------------------------------------
 // SFTPWorker
 // -----------------------------------------------------------------------
-SFTPWorker::SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp,
+SFTPWorker::SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp, QMutex *sessionLock,
                        Op op, QObject *parent)
-    : QThread(parent), m_session(session), m_sftp(sftp), m_op(op)
+    : QThread(parent), m_session(session), m_sftp(sftp), m_sessionLock(sessionLock), m_op(op)
 {}
 
-SFTPWorker::SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp,
+SFTPWorker::SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp, QMutex *sessionLock,
                        const QString &localPath, const QString &remotePath,
                        QObject *parent)
-    : QThread(parent), m_session(session), m_sftp(sftp), m_op(Upload)
-    , m_localPath(localPath), m_remotePath(remotePath)
+    : QThread(parent), m_session(session), m_sftp(sftp), m_sessionLock(sessionLock)
+    , m_op(Upload), m_localPath(localPath), m_remotePath(remotePath)
 {}
 
-SFTPWorker::SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp,
+SFTPWorker::SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp, QMutex *sessionLock,
                        const QString &remotePath, const QString &localPath,
                        bool /*download*/, QObject *parent)
-    : QThread(parent), m_session(session), m_sftp(sftp), m_op(Download)
-    , m_localPath(localPath), m_remotePath(remotePath)
+    : QThread(parent), m_session(session), m_sftp(sftp), m_sessionLock(sessionLock)
+    , m_op(Download), m_localPath(localPath), m_remotePath(remotePath)
 {}
 
-SFTPWorker::SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp,
+SFTPWorker::SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp, QMutex *sessionLock,
                        const QString &path, QObject *parent)
-    : QThread(parent), m_session(session), m_sftp(sftp), m_op(List)
-    , m_remotePath(path)
+    : QThread(parent), m_session(session), m_sftp(sftp), m_sessionLock(sessionLock)
+    , m_op(List), m_remotePath(path)
 {}
+
+// RAII helper: switch to blocking mode for the duration of a locked SFTP call,
+// then restore non-blocking on exit. Always used while m_sessionLock is held.
+struct BlockingGuard {
+    LIBSSH2_SESSION *s;
+    explicit BlockingGuard(LIBSSH2_SESSION *s) : s(s) { libssh2_session_set_blocking(s, 1); }
+    ~BlockingGuard() { libssh2_session_set_blocking(s, 0); }
+};
 
 void SFTPWorker::run() {
-    if (!m_session || !m_sftp) {
+    if (!m_session || !m_sftp || !m_sessionLock) {
         emit error("No SFTP session");
         return;
     }
 
-    libssh2_session_set_blocking(m_session, 1);
-
     try {
         if (m_op == List) {
-            QByteArray pathBytes = m_remotePath.toUtf8();
-            LIBSSH2_SFTP_HANDLE *handle =
-                libssh2_sftp_opendir(m_sftp, pathBytes.constData());
+            LIBSSH2_SFTP_HANDLE *handle = nullptr;
+            {
+                QMutexLocker lock(m_sessionLock);
+                BlockingGuard bg(m_session);
+                QByteArray pathBytes = m_remotePath.toUtf8();
+                handle = libssh2_sftp_opendir(m_sftp, pathBytes.constData());
+            }
             if (!handle) {
                 emit error(QString("Cannot open directory: %1").arg(m_remotePath));
-                libssh2_session_set_blocking(m_session, 0);
                 return;
             }
 
             QList<SFTPEntry> entries;
-            char buf[512];
-            LIBSSH2_SFTP_ATTRIBUTES attrs;
             while (true) {
-                int rc = libssh2_sftp_readdir(handle, buf, sizeof(buf), &attrs);
+                char buf[512];
+                LIBSSH2_SFTP_ATTRIBUTES attrs{};
+                int rc;
+                {
+                    QMutexLocker lock(m_sessionLock);
+                    BlockingGuard bg(m_session);
+                    rc = libssh2_sftp_readdir(handle, buf, sizeof(buf), &attrs);
+                }
                 if (rc <= 0) break;
                 QString entryName = QString::fromUtf8(buf, rc);
                 if (entryName == "." || entryName == "..") continue;
@@ -164,14 +180,23 @@ void SFTPWorker::run() {
                 qint64 sz = (attrs.flags & LIBSSH2_SFTP_ATTR_SIZE) ? (qint64)attrs.filesize : 0;
                 entries.append({entryName, isDir, sz});
             }
-            libssh2_sftp_closedir(handle);
+            {
+                QMutexLocker lock(m_sessionLock);
+                BlockingGuard bg(m_session);
+                libssh2_sftp_closedir(handle);
+            }
             emit listed(m_remotePath, entries);
 
         } else if (m_op == Home) {
             char resolved[512] = {};
-            QByteArray dot = ".";
-            int rc = libssh2_sftp_realpath(m_sftp, dot.constData(),
+            int rc;
+            {
+                QMutexLocker lock(m_sessionLock);
+                BlockingGuard bg(m_session);
+                QByteArray dot = ".";
+                rc = libssh2_sftp_realpath(m_sftp, dot.constData(),
                                            resolved, sizeof(resolved) - 1);
+            }
             if (rc > 0) emit homeResolved(QString::fromUtf8(resolved, rc));
             else        emit error("Could not resolve home directory");
 
@@ -179,78 +204,110 @@ void SFTPWorker::run() {
             QFile localFile(m_localPath);
             if (!localFile.open(QIODevice::ReadOnly)) {
                 emit error(QString("Cannot open local file: %1").arg(m_localPath));
-                libssh2_session_set_blocking(m_session, 0);
                 return;
             }
 
-            QByteArray remoteBytes = m_remotePath.toUtf8();
-            LIBSSH2_SFTP_HANDLE *handle =
-                libssh2_sftp_open(m_sftp, remoteBytes.constData(),
-                                  LIBSSH2_FXF_WRITE | LIBSSH2_FXF_CREAT | LIBSSH2_FXF_TRUNC,
-                                  LIBSSH2_SFTP_S_IRUSR | LIBSSH2_SFTP_S_IWUSR |
-                                  LIBSSH2_SFTP_S_IRGRP | LIBSSH2_SFTP_S_IROTH);
+            LIBSSH2_SFTP_HANDLE *handle = nullptr;
+            {
+                QMutexLocker lock(m_sessionLock);
+                BlockingGuard bg(m_session);
+                QByteArray remoteBytes = m_remotePath.toUtf8();
+                handle = libssh2_sftp_open(
+                    m_sftp, remoteBytes.constData(),
+                    LIBSSH2_FXF_WRITE | LIBSSH2_FXF_CREAT | LIBSSH2_FXF_TRUNC,
+                    LIBSSH2_SFTP_S_IRUSR | LIBSSH2_SFTP_S_IWUSR |
+                    LIBSSH2_SFTP_S_IRGRP | LIBSSH2_SFTP_S_IROTH);
+            }
             if (!handle) {
                 emit error(QString("Cannot create remote file: %1").arg(m_remotePath));
-                libssh2_session_set_blocking(m_session, 0);
                 return;
             }
 
+            bool ok = true;
             QByteArray chunk;
-            while (!(chunk = localFile.read(32768)).isEmpty()) {
+            while (ok && !(chunk = localFile.read(32768)).isEmpty()) {
                 const char *ptr = chunk.constData();
                 size_t remaining = static_cast<size_t>(chunk.size());
                 while (remaining > 0) {
-                    ssize_t w = libssh2_sftp_write(handle, ptr, remaining);
-                    if (w < 0) break;
-                    ptr       += w;
+                    ssize_t w;
+                    {
+                        QMutexLocker lock(m_sessionLock);
+                        BlockingGuard bg(m_session);
+                        w = libssh2_sftp_write(handle, ptr, remaining);
+                    }
+                    if (w < 0) { ok = false; break; }
+                    ptr       += static_cast<size_t>(w);
                     remaining -= static_cast<size_t>(w);
                 }
             }
-            libssh2_sftp_close(handle);
+
+            {
+                QMutexLocker lock(m_sessionLock);
+                BlockingGuard bg(m_session);
+                libssh2_sftp_close(handle);
+            }
             localFile.close();
-            emit transferred("upload", m_remotePath);
+            if (ok) emit transferred("upload", m_remotePath);
+            else    emit error(QString("Write error uploading: %1").arg(m_remotePath));
 
         } else if (m_op == Download) {
-            QByteArray remoteBytes = m_remotePath.toUtf8();
-            LIBSSH2_SFTP_HANDLE *handle =
-                libssh2_sftp_open(m_sftp, remoteBytes.constData(),
-                                  LIBSSH2_FXF_READ, 0);
+            LIBSSH2_SFTP_HANDLE *handle = nullptr;
+            qint64 total = 0;
+            {
+                QMutexLocker lock(m_sessionLock);
+                BlockingGuard bg(m_session);
+                QByteArray remoteBytes = m_remotePath.toUtf8();
+                handle = libssh2_sftp_open(m_sftp, remoteBytes.constData(),
+                                           LIBSSH2_FXF_READ, 0);
+                if (handle) {
+                    LIBSSH2_SFTP_ATTRIBUTES attrs{};
+                    libssh2_sftp_fstat(handle, &attrs);
+                    total = (attrs.flags & LIBSSH2_SFTP_ATTR_SIZE) ? (qint64)attrs.filesize : 0;
+                }
+            }
             if (!handle) {
                 emit error(QString("Cannot open remote file: %1").arg(m_remotePath));
-                libssh2_session_set_blocking(m_session, 0);
                 return;
             }
-
-            // Get size via stat
-            LIBSSH2_SFTP_ATTRIBUTES attrs{};
-            libssh2_sftp_fstat(handle, &attrs);
-            qint64 total = (attrs.flags & LIBSSH2_SFTP_ATTR_SIZE) ? (qint64)attrs.filesize : 0;
 
             QFile localFile(m_localPath);
             if (!localFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-                emit error(QString("Cannot create local file: %1").arg(m_localPath));
+                QMutexLocker lock(m_sessionLock);
+                BlockingGuard bg(m_session);
                 libssh2_sftp_close(handle);
-                libssh2_session_set_blocking(m_session, 0);
+                emit error(QString("Cannot create local file: %1").arg(m_localPath));
                 return;
             }
 
-            char buf[32768];
             qint64 done = 0;
-            ssize_t nread;
-            while ((nread = libssh2_sftp_read(handle, buf, sizeof(buf))) > 0) {
+            bool   ok   = true;
+            char   buf[32768];
+            while (ok) {
+                ssize_t nread;
+                {
+                    QMutexLocker lock(m_sessionLock);
+                    BlockingGuard bg(m_session);
+                    nread = libssh2_sftp_read(handle, buf, sizeof(buf));
+                }
+                if (nread == 0) break;
+                if (nread < 0) { ok = false; break; }
                 localFile.write(buf, nread);
                 done += nread;
                 if (total > 0) emit progress(done, total);
             }
-            libssh2_sftp_close(handle);
+
+            {
+                QMutexLocker lock(m_sessionLock);
+                BlockingGuard bg(m_session);
+                libssh2_sftp_close(handle);
+            }
             localFile.close();
-            emit transferred("download", m_localPath);
+            if (ok) emit transferred("download", m_localPath);
+            else    emit error(QString("Read error downloading: %1").arg(m_remotePath));
         }
     } catch (...) {
         emit error("SFTP operation failed");
     }
-
-    libssh2_session_set_blocking(m_session, 0);
 }
 
 // -----------------------------------------------------------------------
@@ -285,8 +342,10 @@ void RemoteFileList::dropEvent(QDropEvent *event) {
     }
 }
 
+// Download selected files to a temp dir, then hand off to Qt's drag machinery.
+// The session mutex is held per-chunk so the SSH read loop can interleave.
 void RemoteFileList::startDrag(Qt::DropActions /*supportedActions*/) {
-    if (!session || !sftp) return;
+    if (!session || !sftp || !sessionLock) return;
 
     QStringList names;
     for (QListWidgetItem *item : selectedItems()) {
@@ -300,28 +359,44 @@ void RemoteFileList::startDrag(Qt::DropActions /*supportedActions*/) {
     if (!tmpDir.isValid()) return;
 
     QList<QUrl> urls;
-    libssh2_session_set_blocking(session, 1);
     for (const QString &name : names) {
         QString remPath = remotePath + "/" + name;
         QString locPath = tmpDir.path() + "/" + name;
 
-        QByteArray remBytes = remPath.toUtf8();
-        LIBSSH2_SFTP_HANDLE *handle =
-            libssh2_sftp_open(sftp, remBytes.constData(), LIBSSH2_FXF_READ, 0);
+        LIBSSH2_SFTP_HANDLE *handle = nullptr;
+        {
+            QMutexLocker lock(sessionLock);
+            BlockingGuard bg(session);
+            QByteArray remBytes = remPath.toUtf8();
+            handle = libssh2_sftp_open(sftp, remBytes.constData(), LIBSSH2_FXF_READ, 0);
+        }
         if (!handle) continue;
 
         QFile f(locPath);
         if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
             char buf[32768];
-            ssize_t n;
-            while ((n = libssh2_sftp_read(handle, buf, sizeof(buf))) > 0)
+            bool ok = true;
+            while (ok) {
+                ssize_t n;
+                {
+                    QMutexLocker lock(sessionLock);
+                    BlockingGuard bg(session);
+                    n = libssh2_sftp_read(handle, buf, sizeof(buf));
+                }
+                if (n == 0) break;
+                if (n < 0) { ok = false; break; }
                 f.write(buf, n);
+            }
             f.close();
-            urls << QUrl::fromLocalFile(locPath);
+            if (ok) urls << QUrl::fromLocalFile(locPath);
         }
-        libssh2_sftp_close(handle);
+
+        {
+            QMutexLocker lock(sessionLock);
+            BlockingGuard bg(session);
+            libssh2_sftp_close(handle);
+        }
     }
-    libssh2_session_set_blocking(session, 0);
 
     if (urls.isEmpty()) return;
 
@@ -396,7 +471,6 @@ RemoteFileBrowser::RemoteFileBrowser(QWidget *parent) : QWidget(parent) {
 void RemoteFileBrowser::setPane(SessionPane *pane) {
     if (m_pane == pane && m_sftp != nullptr) return;
 
-    // Disconnect old pane signals
     if (m_pane && m_pane->cwdTracker) {
         disconnect(m_pane->cwdTracker, &CwdTracker::cwdChanged,
                    this, &RemoteFileBrowser::onCwdChanged);
@@ -405,10 +479,12 @@ void RemoteFileBrowser::setPane(SessionPane *pane) {
     m_pane        = pane;
     m_session     = nullptr;
     m_sftp        = nullptr;
+    m_sessionLock = nullptr;
     m_currentPath.clear();
     m_listWidget->clear();
-    m_listWidget->session  = nullptr;
-    m_listWidget->sftp     = nullptr;
+    m_listWidget->session     = nullptr;
+    m_listWidget->sftp        = nullptr;
+    m_listWidget->sessionLock = nullptr;
     m_pathEdit->clear();
     m_statusLabel->setText("");
 
@@ -420,11 +496,17 @@ void RemoteFileBrowser::setPane(SessionPane *pane) {
     }
 
     if (pane->session) {
-        m_session = pane->session->rawSession();
-        m_sftp    = pane->session->sftpHandle();
+        // rawSftp() is safe here: it was set in the SSH thread before the
+        // connected() signal was emitted, so the queued delivery establishes
+        // a happens-before with this UI-thread call.
+        m_session     = pane->session->rawSession();
+        m_sftp        = pane->session->rawSftp();
+        m_sessionLock = pane->session->sessionLock();
+
         if (m_sftp) {
-            m_listWidget->session = m_session;
-            m_listWidget->sftp    = m_sftp;
+            m_listWidget->session     = m_session;
+            m_listWidget->sftp        = m_sftp;
+            m_listWidget->sessionLock = m_sessionLock;
             setEnabled(true);
             if (pane->cwdTracker && !pane->cwdTracker->cwd().isEmpty())
                 setPath(pane->cwdTracker->cwd());
@@ -440,7 +522,7 @@ void RemoteFileBrowser::setPane(SessionPane *pane) {
 
 void RemoteFileBrowser::resolveHome() {
     if (!m_sftp || !m_session || !m_pane || !m_pane->session) return;
-    SFTPWorker *w = new SFTPWorker(m_session, m_sftp, SFTPWorker::Home, this);
+    SFTPWorker *w = new SFTPWorker(m_session, m_sftp, m_sessionLock, SFTPWorker::Home, this);
     connect(w, &SFTPWorker::homeResolved, this, &RemoteFileBrowser::onHomeResolved);
     connect(w, &SFTPWorker::error, this, &RemoteFileBrowser::onError);
     runWorker(w);
@@ -460,7 +542,7 @@ void RemoteFileBrowser::setPath(const QString &path) {
 
 void RemoteFileBrowser::refresh() {
     if (!m_sftp || !m_session || m_currentPath.isEmpty()) return;
-    SFTPWorker *w = new SFTPWorker(m_session, m_sftp, m_currentPath, this);
+    SFTPWorker *w = new SFTPWorker(m_session, m_sftp, m_sessionLock, m_currentPath, this);
     connect(w, &SFTPWorker::listed,  this, &RemoteFileBrowser::onListed);
     connect(w, &SFTPWorker::error,   this, &RemoteFileBrowser::onError);
     runWorker(w);
@@ -495,7 +577,6 @@ void RemoteFileBrowser::onItemDoubleClicked(QListWidgetItem *item) {
     QVariantList data = item->data(Qt::UserRole).toList();
     if (data.size() >= 2 && data[1].toBool() && !m_currentPath.isEmpty()) {
         QString newPath = m_currentPath + "/" + data[0].toString();
-        // normalize
         QStringList parts = newPath.split('/', Qt::SkipEmptyParts);
         QStringList out;
         for (const QString &p : parts) {
@@ -580,7 +661,7 @@ void RemoteFileBrowser::onUploadRequested(const QStringList &localPaths) {
     if (!m_sftp || !m_session || m_currentPath.isEmpty()) return;
     for (const QString &lp : localPaths) {
         QString remotePath = m_currentPath + "/" + QFileInfo(lp).fileName();
-        SFTPWorker *w = new SFTPWorker(m_session, m_sftp, lp, remotePath, this);
+        SFTPWorker *w = new SFTPWorker(m_session, m_sftp, m_sessionLock, lp, remotePath, this);
         connect(w, &SFTPWorker::transferred, this, [this](const QString&, const QString&) { refresh(); });
         connect(w, &SFTPWorker::error, this, &RemoteFileBrowser::onError);
         runWorker(w);
@@ -603,10 +684,10 @@ void RemoteFileBrowser::startNextDownload() {
     else
         m_statusLabel->setText(QString("Downloading %1...").arg(name));
 
-    SFTPWorker *w = new SFTPWorker(m_session, m_sftp, remotePath, localPath, true, this);
-    connect(w, &SFTPWorker::progress,     this, &RemoteFileBrowser::onDownloadProgress);
-    connect(w, &SFTPWorker::transferred,  this, &RemoteFileBrowser::onDownloadFinished);
-    connect(w, &SFTPWorker::error,        this, &RemoteFileBrowser::onDownloadError);
+    SFTPWorker *w = new SFTPWorker(m_session, m_sftp, m_sessionLock, remotePath, localPath, true, this);
+    connect(w, &SFTPWorker::progress,    this, &RemoteFileBrowser::onDownloadProgress);
+    connect(w, &SFTPWorker::transferred, this, &RemoteFileBrowser::onDownloadFinished);
+    connect(w, &SFTPWorker::error,       this, &RemoteFileBrowser::onDownloadError);
     runWorker(w);
 }
 

@@ -3,12 +3,18 @@
 #include <QString>
 #include <QByteArray>
 #include <QMutex>
+#include <QQueue>
+#include <QPair>
 #include <QWaitCondition>
 
+#include <atomic>
 #include <libssh2.h>
 #include <libssh2_sftp.h>
 
 // Replaces ssh_session.py (paramiko) with libssh2.
+// Thread-safety model: all libssh2 calls are serialized by m_sessionMutex.
+// The UI thread sends data/resize via lock-free queues; the SSH thread drains
+// them in the read loop. SFTPWorker acquires m_sessionMutex per chunk.
 
 class SSHSession : public QThread {
     Q_OBJECT
@@ -25,16 +31,19 @@ public:
 
     ~SSHSession() override;
 
+    // Called from UI thread — enqueue; SSH thread drains in read loop.
     void send(const QByteArray &data);
     void resize(int cols, int rows);
+
+    // Interrupt the SSH thread and unblock any pending wait.
     void stop();
 
-    // Returns an open SFTP handle (or nullptr).
-    // Called from the UI thread while the SSH thread is running.
-    LIBSSH2_SFTP    *sftpHandle();
+    // Returns the session lock; SFTPWorker must hold it around every libssh2 call.
+    QMutex          *sessionLock()  { return &m_sessionMutex; }
 
-    // Returns the raw libssh2 session (for passing to SFTPWorker).
-    LIBSSH2_SESSION *rawSession() const { return m_session; }
+    // Read-only accessors — safe after connected() signal has been delivered.
+    LIBSSH2_SESSION *rawSession()   const { return m_session; }
+    LIBSSH2_SFTP    *rawSftp()      const { return m_sftp; }
 
 signals:
     void dataReceived(const QByteArray &data);
@@ -42,7 +51,7 @@ signals:
     void connectionClosed();
     void connected();
 
-    // Emitted from SSH thread; UI thread must respond and call acceptHostKey()/rejectHostKey()
+    // Emitted from SSH thread; UI thread must call acceptHostKey()/rejectHostKey().
     void hostKeyUnknown(const QString &host, const QString &keyType,
                         const QString &fingerprint, const QString &hexHash);
 
@@ -63,22 +72,29 @@ private:
     QString m_term;
     int     m_cols, m_rows;
 
-    bool           m_running       = false;
-    LIBSSH2_SESSION *m_session     = nullptr;
-    LIBSSH2_CHANNEL *m_channel     = nullptr;
-    LIBSSH2_SFTP    *m_sftp        = nullptr;
-    int             m_sock         = -1;
+    std::atomic<bool>  m_running   { false };
+    LIBSSH2_SESSION   *m_session   = nullptr;
+    LIBSSH2_CHANNEL   *m_channel   = nullptr;
+    LIBSSH2_SFTP      *m_sftp      = nullptr;
+    int                m_sock      = -1;
 
-    // Host-key prompt synchronization
+    // Serializes ALL libssh2 session/channel/sftp calls across threads.
+    QMutex                 m_sessionMutex;
+
+    // UI → SSH thread command queues.
+    QMutex                 m_queueMutex;
+    QQueue<QByteArray>     m_sendQueue;
+    QQueue<QPair<int,int>> m_resizeQueue;
+
+    // Host-key prompt synchronization.
     QMutex         m_hostKeyMutex;
     QWaitCondition m_hostKeyCond;
     bool           m_hostKeyAnswered = false;
     bool           m_hostKeyAccepted = false;
 
     bool  connectSocket();
-    bool  initSession();
-    bool  authenticateAndShell();
     bool  checkKnownHost(const char *fingerprint, size_t len,
                          int type, const char *key, size_t keyLen);
+    void  drainQueues();
     void  closeSocket();
 };
