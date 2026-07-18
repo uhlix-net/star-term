@@ -30,10 +30,37 @@ Function .onInit
   ; other open windows.
   BringToFront
 
+  ; Check if the application is currently running and offer to close it.
+  check_running:
+    FindWindow $0 "" "Star Term"
+    IntCmp $0 0 not_running app_running app_running
+
+  app_running:
+    MessageBox MB_YESNO|MB_ICONQUESTION \
+      "Star Term is currently running.$\n$\nThe installer must close it before continuing.$\n$\nClose Star Term now?" \
+      IDYES close_app IDNO abort_install
+
+  close_app:
+    SendMessage $0 ${WM_CLOSE} 0 0
+    Sleep 2000
+    ; Verify it actually closed; if not, warn and abort.
+    FindWindow $0 "" "Star Term"
+    IntCmp $0 0 not_running still_running still_running
+
+  still_running:
+    MessageBox MB_OK|MB_ICONEXCLAMATION \
+      "Star Term could not be closed automatically.$\n$\nPlease close it manually and run the installer again."
+    Abort
+
+  abort_install:
+    Abort
+
+  not_running:
+
   ; If already installed, ask whether to install/update or cancel
   ReadRegStr $R0 HKLM "${UNINSTKEY}" "DisplayVersion"
   StrCmp $R0 "" not_installed
-  MessageBox MB_YESNO|MB_ICONQUESTION "${APPNAME} version $R0 is already installed.$\n$\nDo you want to install/update it?" IDYES not_installed
+  MessageBox MB_YESNO|MB_ICONQUESTION "${DISPLAYNAME} version $R0 is already installed.$\n$\nDo you want to install/update it?" IDYES not_installed
   Abort
   not_installed:
 FunctionEnd
