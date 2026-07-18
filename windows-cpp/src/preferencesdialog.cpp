@@ -199,14 +199,14 @@ QWidget *PreferencesDialog::buildRdpTab() {
     else                 m_rdpScrollRadio->setChecked(true);
 
     QLabel *scaleNote = new QLabel(
-        "Scales the remote desktop to fill the window. Windows will show\n"
-        "a one-time security prompt when starting a scale-mode session.");
+        "The mstsc window tracks the tab size. The session resolution\n"
+        "is set at connect time; content scrolls if the tab is made smaller.");
     scaleNote->setObjectName("mutedNote");
     scaleNote->setWordWrap(true);
 
     QLabel *scrollNote = new QLabel(
-        "Keeps the session at its original resolution. Scroll bars\n"
-        "appear when the window is smaller than the session.");
+        "Session resolution is fixed at connect time. Qt scroll bars\n"
+        "appear when the tab is made smaller than the session.");
     scrollNote->setObjectName("mutedNote");
     scrollNote->setWordWrap(true);
 

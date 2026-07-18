@@ -579,6 +579,8 @@ void MainWindow::showError(const QString &message) {
 // -----------------------------------------------------------------------
 void MainWindow::openPreferencesDialog() {
     QJsonObject settings = loadSettings();
+    QString oldRdpMode = settings.value("rdp_resize_mode").toString("scroll");
+
     PreferencesDialog dlg(
         this,
         settings.value("font_family").toString("Courier New"),
@@ -606,6 +608,16 @@ void MainWindow::openPreferencesDialog() {
         clearStylesheetCache();
         qApp->setStyleSheet(
             getStylesheet(settings.value("theme").toString("dark")));
+
+        // Reconnect any open RDP sessions when the resize mode changes so the
+        // new setting takes effect immediately without requiring a manual reconnect.
+        QString newRdpMode = newGenSettings.value("rdp_resize_mode").toString("scroll");
+        if (oldRdpMode != newRdpMode) {
+            for (int i = 0; i < m_tabs->count(); ++i) {
+                if (auto *rdp = qobject_cast<RdpPane*>(m_tabs->widget(i)))
+                    rdp->reconnect();
+            }
+        }
     }
 }
 

@@ -15,6 +15,7 @@ public:
     explicit RdpPane(const QJsonObject &session, QWidget *parent = nullptr);
     ~RdpPane();
     void disconnectRdp();
+    void reconnect();
 
 signals:
     void closeRequested();
@@ -38,6 +39,7 @@ private:
     QString         m_user;
     int             m_port            = 3389;
     QString         m_credKey;
+    QString         m_cachedPass;
     QString         m_rdpFilePath;
     WId             m_mstscHwnd       = 0;
     QSet<quintptr>  m_existingWindows;
