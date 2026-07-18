@@ -1,9 +1,13 @@
 #include "rdppane.h"
 
 #include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
+#include <QFormLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QResizeEvent>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -13,31 +17,20 @@
 #endif
 
 // ---------------------------------------------------------------------------
-// mstsc.exe creates its RDP session container window with the class name
-// "TscShellContainerClass".  This window exists from first connection through
-// disconnect and is the definitive handle to embed.  The credential dialog
-// that mstsc shows BEFORE connecting is a separate top-level window that we
-// deliberately skip — it will float as a normal dialog — and we wait until
-// the session container itself appears.
+// EnumWindows callbacks — find TscShellContainerClass windows (mstsc's RDP
+// session container, distinct from the pre-connection credential dialog).
 // ---------------------------------------------------------------------------
 
-struct RdpEnumData {
-    const QSet<quintptr> *exclude; // windows that existed before our launch
-    HWND                  found;
-};
+struct RdpEnumData { const QSet<quintptr> *exclude; HWND found; };
 
 static BOOL CALLBACK findRdpSession(HWND hwnd, LPARAM lp)
 {
     auto *d = reinterpret_cast<RdpEnumData *>(lp);
     if (d->exclude->contains(reinterpret_cast<quintptr>(hwnd))) return TRUE;
     if (!IsWindowVisible(hwnd)) return TRUE;
-
     WCHAR cls[256] = {};
     GetClassNameW(hwnd, cls, 256);
-    if (_wcsicmp(cls, L"TscShellContainerClass") == 0) {
-        d->found = hwnd;
-        return FALSE;
-    }
+    if (_wcsicmp(cls, L"TscShellContainerClass") == 0) { d->found = hwnd; return FALSE; }
     return TRUE;
 }
 
@@ -52,41 +45,85 @@ static BOOL CALLBACK snapshotRdpSessions(HWND hwnd, LPARAM lp)
 }
 
 // ---------------------------------------------------------------------------
+// Run a console utility (e.g. cmdkey.exe) without flashing a console window.
+// ---------------------------------------------------------------------------
+static void runHidden(const QString &program, const QStringList &args)
+{
+    QProcess proc;
+#ifdef Q_OS_WIN
+    proc.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *a) {
+        a->flags |= CREATE_NO_WINDOW;
+    });
+#endif
+    proc.start(program, args);
+    proc.waitForFinished(5000);
+}
+
+// ---------------------------------------------------------------------------
 
 RdpPane::RdpPane(const QJsonObject &session, QWidget *parent)
     : QWidget(parent)
 {
     name   = session.value("name").toString();
     m_host = session.value("host").toString();
-    int     port = session.value("port").toInt(3389);
-    QString user = session.value("username").toString();
+    int  port = session.value("port").toInt(3389);
+    m_user    = session.value("username").toString();
 
-    // Must have a native HWND so we can use it as the Win32 parent.
     setAttribute(Qt::WA_NativeWindow);
 
-    m_status = new QLabel(
-        QString("Connecting to %1...\n\nA credential dialog may appear separately.\n"
-                "After signing in, the session will open here.").arg(m_host));
+    m_status = new QLabel(QString("Connecting to %1...").arg(m_host));
     m_status->setAlignment(Qt::AlignCenter);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(m_status);
 
-    // Snapshot every TscShellContainerClass window that currently exists so
-    // we don't accidentally steal a session the user had open before this launch.
-    EnumWindows(snapshotRdpSessions,
-                reinterpret_cast<LPARAM>(&m_existingWindows));
+    // --- Collect credentials inside the app before launching mstsc ----------
+    QDialog credDlg;
+    credDlg.setWindowTitle(QString("Connect to %1").arg(m_host));
+    auto *form = new QFormLayout(&credDlg);
 
-    // Write a temporary .rdp file so we can pass all parameters to mstsc.exe.
+    auto *userEdit = new QLineEdit(m_user, &credDlg);
+    auto *passEdit = new QLineEdit(&credDlg);
+    passEdit->setEchoMode(QLineEdit::Password);
+    form->addRow("Username:", userEdit);
+    form->addRow("Password:", passEdit);
+
+    auto *btns = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &credDlg);
+    form->addRow(btns);
+    connect(btns, &QDialogButtonBox::accepted, &credDlg, &QDialog::accept);
+    connect(btns, &QDialogButtonBox::rejected, &credDlg, &QDialog::reject);
+
+    if (credDlg.exec() != QDialog::Accepted) {
+        m_status->setText("Connection cancelled.");
+        return;
+    }
+    m_user        = userEdit->text();
+    QString pass  = passEdit->text();
+
+    // Store credentials temporarily in Windows Credential Manager so mstsc
+    // picks them up automatically and skips its own credential prompt.
+    m_credKey = QString("TERMSRV/%1").arg(m_host);
+    runHidden("cmdkey.exe", {
+        QString("/generic:%1").arg(m_credKey),
+        QString("/user:%1").arg(m_user),
+        QString("/pass:%1").arg(pass)
+    });
+
+    // Snapshot existing TscShellContainerClass windows before launching.
+    EnumWindows(snapshotRdpSessions, reinterpret_cast<LPARAM>(&m_existingWindows));
+
+    // Write temp .rdp file.
     m_tmpRdpPath = QDir::temp().filePath(
         QString("starterm_%1.rdp").arg(QDateTime::currentMSecsSinceEpoch()));
 
     QString rdpContent = QString(
         "full address:s:%1:%2\r\n"
         "username:s:%3\r\n"
-        "prompt for credentials:i:1\r\n"
-    ).arg(m_host).arg(port).arg(user);
+        "prompt for credentials:i:0\r\n"
+        "authentication level:i:2\r\n"
+    ).arg(m_host).arg(port).arg(m_user);
 
     QFile f(m_tmpRdpPath);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
@@ -97,18 +134,13 @@ RdpPane::RdpPane(const QJsonObject &session, QWidget *parent)
     f.close();
 
     m_process = new QProcess(this);
-    connect(m_process, &QProcess::finished,
-            this, &RdpPane::onProcessFinished);
-
+    connect(m_process, &QProcess::finished, this, &RdpPane::onProcessFinished);
     m_process->start("mstsc.exe", { m_tmpRdpPath });
     if (!m_process->waitForStarted(5000)) {
         m_status->setText("Failed to launch mstsc.exe.");
         return;
     }
 
-    // Poll for the TscShellContainerClass session window.  The credential
-    // dialog may appear first as a separate floating window and take time to
-    // complete, so we poll for up to 5 minutes before giving up.
     m_pollTimer = new QTimer(this);
     connect(m_pollTimer, &QTimer::timeout, this, &RdpPane::pollForWindow);
     m_pollTimer->start(500);
@@ -117,6 +149,23 @@ RdpPane::RdpPane(const QJsonObject &session, QWidget *parent)
 
 RdpPane::~RdpPane()
 {
+    // CRITICAL: un-parent the mstsc window before Qt destroys our native HWND.
+    // While the mstsc window is a Win32 child of our HWND, Win32 sends
+    // WM_DESTROY to it when our HWND is torn down — mstsc's window proc
+    // handles that unexpectedly and causes an access violation in Qt6Core.dll.
+    if (m_mstscHwnd) {
+        HWND hwnd = reinterpret_cast<HWND>(m_mstscHwnd);
+        LONG style = GetWindowLong(hwnd, GWL_STYLE);
+        style &= ~WS_CHILD;
+        style |= WS_POPUP;
+        SetWindowLong(hwnd, GWL_STYLE, style);
+        SetParent(hwnd, nullptr);
+        m_mstscHwnd = 0;
+    }
+    if (!m_credKey.isEmpty()) {
+        runHidden("cmdkey.exe", { QString("/delete:%1").arg(m_credKey) });
+        m_credKey.clear();
+    }
     QFile::remove(m_tmpRdpPath);
 }
 
@@ -131,7 +180,6 @@ void RdpPane::pollForWindow()
     HWND hwnd = data.found;
     HWND ours = reinterpret_cast<HWND>(winId());
 
-    // Strip decorations so it looks embedded.
     LONG style = GetWindowLong(hwnd, GWL_STYLE);
     style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX |
                WS_MAXIMIZEBOX | WS_SYSMENU | WS_BORDER);
@@ -150,6 +198,12 @@ void RdpPane::pollForWindow()
                  SWP_FRAMECHANGED | SWP_SHOWWINDOW);
 
     m_status->hide();
+
+    // Credentials were consumed during NLA authentication — clean up now.
+    if (!m_credKey.isEmpty()) {
+        runHidden("cmdkey.exe", { QString("/delete:%1").arg(m_credKey) });
+        m_credKey.clear();
+    }
 }
 
 void RdpPane::resizeEvent(QResizeEvent *event)
@@ -166,7 +220,7 @@ void RdpPane::resizeEvent(QResizeEvent *event)
 void RdpPane::onProcessFinished()
 {
     if (m_pollTimer) m_pollTimer->stop();
-    m_mstscHwnd = 0;
+    m_mstscHwnd = 0; // Window already destroyed by the exiting process
     m_status->setText(QString("Disconnected from %1.").arg(m_host));
     m_status->show();
     QFile::remove(m_tmpRdpPath);
@@ -176,10 +230,25 @@ void RdpPane::onProcessFinished()
 void RdpPane::disconnectRdp()
 {
     if (m_pollTimer) m_pollTimer->stop();
-    if (m_mstscHwnd) {
-        SendMessage(reinterpret_cast<HWND>(m_mstscHwnd), WM_CLOSE, 0, 0);
-        m_mstscHwnd = 0;
+
+    if (!m_credKey.isEmpty()) {
+        runHidden("cmdkey.exe", { QString("/delete:%1").arg(m_credKey) });
+        m_credKey.clear();
     }
+
+    if (m_mstscHwnd) {
+        HWND hwnd = reinterpret_cast<HWND>(m_mstscHwnd);
+        // Restore popup style and unparent before closing so Win32 doesn't
+        // send WM_DESTROY through our widget's HWND on process termination.
+        LONG style = GetWindowLong(hwnd, GWL_STYLE);
+        style &= ~WS_CHILD;
+        style |= WS_POPUP;
+        SetWindowLong(hwnd, GWL_STYLE, style);
+        SetParent(hwnd, nullptr);
+        m_mstscHwnd = 0;
+        SendMessage(hwnd, WM_CLOSE, 0, 0);
+    }
+
     if (m_process && m_process->state() != QProcess::NotRunning) {
         m_process->terminate();
         m_process->waitForFinished(2000);
