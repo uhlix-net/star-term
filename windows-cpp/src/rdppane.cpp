@@ -1,97 +1,163 @@
 #include "rdppane.h"
 
-#include <QAxObject>
-#include <QAxWidget>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
 #include <QLabel>
+#include <QResizeEvent>
 #include <QTimer>
 #include <QVBoxLayout>
+
+#ifdef Q_OS_WIN
+#  include <windows.h>
+#endif
+
+// ----------------------------------------------------------------------------
+// Win32 window-search helper — finds the first visible top-level window owned
+// by a specific PID.  Used to locate the mstsc.exe window after launch.
+// ----------------------------------------------------------------------------
+struct FindWinData { DWORD pid; HWND hwnd; };
+
+static BOOL CALLBACK enumProc(HWND hwnd, LPARAM lp)
+{
+    auto *d = reinterpret_cast<FindWinData *>(lp);
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid == d->pid && IsWindowVisible(hwnd) && GetParent(hwnd) == nullptr) {
+        d->hwnd = hwnd;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+// ----------------------------------------------------------------------------
 
 RdpPane::RdpPane(const QJsonObject &session, QWidget *parent)
     : QWidget(parent)
 {
     name   = session.value("name").toString();
     m_host = session.value("host").toString();
-    m_port = session.value("port").toInt(3389);
-    m_user = session.value("username").toString();
+    int     port = session.value("port").toInt(3389);
+    QString user = session.value("username").toString();
 
-    // Force a native Win32 HWND so the ActiveX control has a real window to
-    // embed into. Without this, setControl() can silently fail on Qt6.
+    // Must have a native HWND so we can use it as the Win32 parent.
     setAttribute(Qt::WA_NativeWindow);
 
-    m_status = new QLabel(QString("Connecting to %1...").arg(m_host));
+    m_status = new QLabel(QString("Connecting to %1…").arg(m_host));
     m_status->setAlignment(Qt::AlignCenter);
 
-    m_rdp = new QAxWidget(this);
-    m_rdp->setAttribute(Qt::WA_NativeWindow);
-
-    QVBoxLayout *layout = new QVBoxLayout(this);
+    auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
     layout->addWidget(m_status);
-    layout->addWidget(m_rdp, 1);
-    // ActiveX init deferred to showEvent — widget must be visible first.
-}
 
-void RdpPane::showEvent(QShowEvent *event) {
-    QWidget::showEvent(event);
-    if (!m_initialized) {
-        m_initialized = true;
-        // Use singleShot(0) so Qt finishes painting the tab before we block
-        // on COM initialization.
-        QTimer::singleShot(0, this, &RdpPane::initRdp);
+    // Write a temporary .rdp file so we can pass all parameters to mstsc.exe.
+    m_tmpRdpPath = QDir::temp().filePath(
+        QString("starterm_%1.rdp").arg(QDateTime::currentMSecsSinceEpoch()));
+
+    QString rdpContent = QString(
+        "full address:s:%1:%2\r\n"
+        "username:s:%3\r\n"
+        "prompt for credentials:i:1\r\n"
+    ).arg(m_host).arg(port).arg(user);
+
+    QFile f(m_tmpRdpPath);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        m_status->setText("Could not write temporary RDP file.");
+        return;
     }
-}
+    f.write(rdpContent.toUtf8());
+    f.close();
 
-void RdpPane::initRdp() {
-    // Try progressively older ProgIDs; fall back to versionless alias.
-    bool ok = m_rdp->setControl("MsTscAx.MsRdpClient10");
-    if (!ok) ok = m_rdp->setControl("MsTscAx.MsRdpClient9Not4K");
-    if (!ok) ok = m_rdp->setControl("MsTscAx.MsRdpClient8");
-    if (!ok) ok = m_rdp->setControl("MsTscAx.MsRdpClient");
+    m_process = new QProcess(this);
+    connect(m_process, &QProcess::finished,
+            this, &RdpPane::onProcessFinished);
 
-    if (!ok) {
-        m_rdp->hide();
-        m_status->setText(
-            "RDP ActiveX control could not be loaded.\n"
-            "Ensure the Qt6 ActiveQt module is installed and mstscax.dll is registered.");
-        m_status->show();
+    m_process->start("mstsc.exe", { m_tmpRdpPath });
+    if (!m_process->waitForStarted(5000)) {
+        m_status->setText("Failed to launch mstsc.exe.");
         return;
     }
 
-    m_rdp->setProperty("Server",   m_host);
-    m_rdp->setProperty("UserName", m_user);
-
-    if (m_port != 3389) {
-        QAxObject *adv = m_rdp->querySubObject("AdvancedSettings2");
-        if (adv) {
-            adv->setProperty("RDPPort", m_port);
-            delete adv;
-        }
-    }
-
-    // Use old-style SIGNAL/SLOT — ActiveX event names come from the COM
-    // type library and are not available as compile-time function pointers.
-    connect(m_rdp, SIGNAL(OnConnected()),        this, SLOT(onConnected()));
-    connect(m_rdp, SIGNAL(OnDisconnected(long)), this, SLOT(onDisconnected(long)));
-
-    m_rdp->dynamicCall("Connect()");
+    // Poll until mstsc's window becomes visible, then embed it.
+    m_pollTimer = new QTimer(this);
+    connect(m_pollTimer, &QTimer::timeout, this, &RdpPane::pollForWindow);
+    m_pollTimer->start(200);
+    // Give up after 20 seconds if no window appears.
+    QTimer::singleShot(20000, m_pollTimer, &QTimer::stop);
 }
 
-void RdpPane::disconnectRdp() {
-    if (m_rdp) m_rdp->dynamicCall("Disconnect()");
+RdpPane::~RdpPane()
+{
+    QFile::remove(m_tmpRdpPath);
 }
 
-void RdpPane::onConnected() {
+void RdpPane::pollForWindow()
+{
+    if (!m_process) return;
+
+    DWORD pid = static_cast<DWORD>(m_process->processId());
+    FindWinData data = { pid, nullptr };
+    EnumWindows(enumProc, reinterpret_cast<LPARAM>(&data));
+    if (!data.hwnd) return;
+
+    m_pollTimer->stop();
+
+    HWND hwnd = data.hwnd;
+    HWND ours = reinterpret_cast<HWND>(winId());
+
+    // Strip window decorations so it looks embedded, not floating.
+    LONG style = GetWindowLong(hwnd, GWL_STYLE);
+    style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX |
+               WS_MAXIMIZEBOX | WS_SYSMENU | WS_BORDER);
+    style |= WS_CHILD;
+    SetWindowLong(hwnd, GWL_STYLE, style);
+
+    LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+    exStyle &= ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE |
+                 WS_EX_CLIENTEDGE | WS_EX_STATICEDGE);
+    SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+
+    // Reparent into our widget.
+    SetParent(hwnd, ours);
+    m_mstscHwnd = reinterpret_cast<WId>(hwnd);
+
+    SetWindowPos(hwnd, HWND_TOP, 0, 0, width(), height(),
+                 SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+
     m_status->hide();
 }
 
-void RdpPane::onDisconnected(long reason) {
-    if (!m_rdp) return;
-    // reason == 1 means we called Disconnect() ourselves (tab close) — stay quiet.
-    if (reason == 1) return;
-    m_rdp->hide();
-    m_status->setText(reason == 2
-        ? QString("Session ended by %1.").arg(m_host)
-        : QString("Disconnected from %1.").arg(m_host));
+void RdpPane::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    if (m_mstscHwnd) {
+        HWND hwnd = reinterpret_cast<HWND>(m_mstscHwnd);
+        SetWindowPos(hwnd, nullptr, 0, 0, event->size().width(), event->size().height(),
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+}
+
+void RdpPane::onProcessFinished()
+{
+    if (m_pollTimer) m_pollTimer->stop();
+    m_mstscHwnd = 0;
+    m_status->setText(QString("Disconnected from %1.").arg(m_host));
     m_status->show();
+    QFile::remove(m_tmpRdpPath);
+    m_tmpRdpPath.clear();
+}
+
+void RdpPane::disconnectRdp()
+{
+    if (m_pollTimer) m_pollTimer->stop();
+
+    if (m_mstscHwnd) {
+        SendMessage(reinterpret_cast<HWND>(m_mstscHwnd), WM_CLOSE, 0, 0);
+        m_mstscHwnd = 0;
+    }
+    if (m_process && m_process->state() != QProcess::NotRunning) {
+        m_process->terminate();
+        m_process->waitForFinished(2000);
+        m_process->kill();
+    }
 }
