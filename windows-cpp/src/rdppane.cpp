@@ -27,8 +27,12 @@ static BOOL CALLBACK findRdpSession(HWND hwnd, LPARAM lp)
 {
     auto *d = reinterpret_cast<RdpEnumData *>(lp);
     if (d->exclude->contains(reinterpret_cast<quintptr>(hwnd))) return TRUE;
-    // Do NOT skip hidden windows — mstsc is launched hidden to prevent the
-    // standalone-window flash, so TscShellContainerClass arrives hidden.
+    // Only match visible windows — mstsc sets WS_VISIBLE on TscShellContainerClass
+    // only after the session is established and ready to display content.
+    // Matching hidden windows picks up an unready placeholder that mstsc creates
+    // early in the connection sequence, causing a blank embed and missing the
+    // real session window entirely.
+    if (!IsWindowVisible(hwnd)) return TRUE;
     WCHAR cls[256] = {};
     GetClassNameW(hwnd, cls, 256);
     if (_wcsicmp(cls, L"TscShellContainerClass") == 0) { d->found = hwnd; return FALSE; }
@@ -169,16 +173,6 @@ void RdpPane::connectToHost()
 
     m_process = new QProcess(this);
     connect(m_process, &QProcess::finished, this, &RdpPane::onProcessFinished);
-
-    // Launch mstsc hidden so it never appears as a standalone window.
-    // The TscShellContainerClass HWND is found while still hidden and shown
-    // only after being embedded in the tab — eliminating the window flash.
-    m_process->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *a) {
-        a->flags |= CREATE_NO_WINDOW;
-        a->startupInfo->dwFlags |= STARTF_USESHOWWINDOW;
-        a->startupInfo->wShowWindow = SW_HIDE;
-    });
-
     m_process->start("mstsc.exe", args);
 
     if (!m_process->waitForStarted(5000)) {
@@ -236,6 +230,11 @@ void RdpPane::pollForWindow()
     m_pollTimer->stop();
 
     HWND hwnd = data.found;
+
+    // Hide immediately — before stripping styles or calling SetParent — so
+    // the window is invisible for as little time as possible as a standalone.
+    // It will be shown again (embedded) via SWP_SHOWWINDOW in SetWindowPos.
+    ShowWindow(hwnd, SW_HIDE);
 
     LONG style = GetWindowLong(hwnd, GWL_STYLE);
     style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX |
