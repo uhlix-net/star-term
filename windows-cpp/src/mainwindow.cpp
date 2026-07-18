@@ -43,6 +43,9 @@
 #include <QCheckBox>
 #include <QPushButton>
 #include <QApplication>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
 #include <QProcess>
 #include <QTimer>
 
@@ -397,15 +400,35 @@ void MainWindow::openConnectionDialog() {
 }
 
 void MainWindow::connectSavedSession(const QJsonObject &session) {
-    // RDP sessions are launched via mstsc.exe — no terminal pane needed.
+    // RDP sessions: write a temporary .rdp file and open it with mstsc.exe.
+    // This is more reliable than passing /v: on the command line, which some
+    // Windows versions reject when the port is explicit or args are quoted.
     if (session.value("type").toString("ssh") == "rdp") {
         QString host = session.value("host").toString();
-        int port = session.value("port").toInt(3389);
+        int     port = session.value("port").toInt(3389);
         QString user = session.value("username").toString();
-        QStringList args;
-        args << QString("/v:%1:%2").arg(host).arg(port);
-        if (!user.isEmpty()) args << QString("/u:%1").arg(user);
-        if (!QProcess::startDetached("mstsc.exe", args)) {
+
+        QString rdpContent =
+            QString("full address:s:%1:%2\r\n"
+                    "username:s:%3\r\n"
+                    "prompt for credentials:i:1\r\n"
+                    "administrative session:i:0\r\n")
+            .arg(host).arg(port).arg(user);
+
+        QString tmpPath = QDir::temp().filePath(
+            QString("starterm_%1.rdp")
+            .arg(QDateTime::currentMSecsSinceEpoch()));
+
+        QFile f(tmpPath);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QMessageBox::critical(this, "RDP Error",
+                "Could not write temporary RDP file.");
+            return;
+        }
+        f.write(rdpContent.toUtf8());
+        f.close();
+
+        if (!QProcess::startDetached("mstsc.exe", {tmpPath})) {
             QMessageBox::critical(this, "RDP Error",
                 "Failed to launch mstsc.exe. Remote Desktop Connection may not be available.");
         }
