@@ -1,3 +1,4 @@
 windows-cpp/build/
+windows-cpp/installer/Output/
 session_id.txt
 *.Zone.Identifier
