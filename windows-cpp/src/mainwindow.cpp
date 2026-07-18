@@ -47,9 +47,15 @@
 #include <QProcess>
 #include <QTimer>
 
-static const QString APP_VERSION = "0.2.0";
+static const QString APP_VERSION = "0.3.0";
 
-static const QString UPDATE_HISTORY = R"(Version 0.2.0 - C++ Edition
+static const QString UPDATE_HISTORY = R"(Version 0.3.0
+- RDP sessions embedded in main window via Windows ActiveX control
+- Right-click copy/paste with mouse drag selection in terminal
+- SSH and RDP session type icons in the session sidebar
+- Check for updates on startup (configurable in Preferences → Updates)
+
+Version 0.2.0 - C++ Edition
 
 - Complete C++ Qt6 port of the Python/PySide6 Star Term application
 - VT100 terminal emulation using a custom C++ parser (replaces pyte)
