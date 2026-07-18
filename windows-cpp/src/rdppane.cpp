@@ -3,15 +3,11 @@
 
 #include <QDialog>
 #include <QDialogButtonBox>
-#include <QDir>
-#include <QFile>
 #include <QFormLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QResizeEvent>
-#include <QScrollArea>
 #include <QShowEvent>
-#include <QTextStream>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -82,19 +78,9 @@ RdpPane::RdpPane(const QJsonObject &session, QWidget *parent)
     m_status = new QLabel(QString("Connecting to %1...").arg(m_host));
     m_status->setAlignment(Qt::AlignCenter);
 
-    // Scroll-mode container — hidden until a scroll-mode session connects.
-    m_scrollContainer = new QWidget();
-    m_scrollContainer->setAttribute(Qt::WA_NativeWindow);
-    m_scrollArea = new QScrollArea();
-    m_scrollArea->setWidget(m_scrollContainer);
-    m_scrollArea->setWidgetResizable(false);
-    m_scrollArea->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-    m_scrollArea->hide();
-
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(m_status);
-    layout->addWidget(m_scrollArea, 1);
 }
 
 void RdpPane::showEvent(QShowEvent *event)
@@ -110,17 +96,13 @@ void RdpPane::showEvent(QShowEvent *event)
 
 void RdpPane::connectToHost()
 {
-    // Read the resize mode preference set in Preferences -> RDP.
-    QJsonObject settings = loadSettings();
-    m_scaleMode = (settings.value("rdp_resize_mode").toString("scroll") == "scale");
-
     // Clean up any previous timer/process from a prior connection attempt.
     if (m_pollTimer) { m_pollTimer->deleteLater(); m_pollTimer = nullptr; }
     if (m_process)   { m_process->deleteLater();   m_process   = nullptr; }
 
     // Credential dialog — skipped when credentials are cached (automatic
-    // reconnect triggered by a settings change).  Always shown on first
-    // connect and after the session has been closed by the user.
+    // reconnect triggered by a resize).  Always shown on first connect and
+    // after the session has been closed by the user.
     if (m_cachedPass.isEmpty()) {
         QDialog credDlg;
         credDlg.setWindowTitle(QString("Connect to %1").arg(m_host));
@@ -159,38 +141,16 @@ void RdpPane::connectToHost()
     m_existingWindows.clear();
     EnumWindows(snapshotRdpSessions, reinterpret_cast<LPARAM>(&m_existingWindows));
 
-    // Session resolution in physical pixels so the remote desktop exactly fills
-    // the HWND — mstsc renders its content at the pixel dimensions passed via
-    // /w and /h, so using physical (not logical) pixels avoids blank strips
-    // when the HWND is larger than the session resolution.
+    // Session resolution in physical pixels so the remote desktop exactly
+    // fills the HWND — mstsc renders at the pixel dimensions passed via /w /h.
     const qreal dpr = devicePixelRatioF();
-    m_sessionPw = qRound(width()  * dpr);
-    m_sessionPh = qRound(height() * dpr);
-
-    // Scroll mode: write a minimal .rdp file that sets desktop scale factor to
-    // 100% so mstsc reports 96 DPI to the remote server, giving 1:1 pixel
-    // mapping.  The file intentionally omits "full address" — host comes from
-    // the command-line /v flag — so mstsc never routes through an existing
-    // instance and no unsigned-file dialog is triggered.
-    if (!m_scaleMode) {
-        m_rdpFilePath = QDir::tempPath() +
-                        QString("/star_term_rdp_%1.rdp").arg(reinterpret_cast<quintptr>(this));
-        QFile f(m_rdpFilePath);
-        if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            QTextStream ts(&f);
-            ts << "desktop scale factor:i:100\r\n"
-               << "device scale factor:i:100\r\n";
-        } else {
-            m_rdpFilePath.clear();
-        }
-    }
+    const int pw = qRound(width()  * dpr);
+    const int ph = qRound(height() * dpr);
 
     QStringList args;
-    if (!m_rdpFilePath.isEmpty())
-        args << m_rdpFilePath;
     args << QString("/v:%1:%2").arg(m_host).arg(m_port);
-    if (m_sessionPw > 0 && m_sessionPh > 0)
-        args << QString("/w:%1").arg(m_sessionPw) << QString("/h:%1").arg(m_sessionPh);
+    if (pw > 0 && ph > 0)
+        args << QString("/w:%1").arg(pw) << QString("/h:%1").arg(ph);
 
     m_process = new QProcess(this);
     connect(m_process, &QProcess::finished, this, &RdpPane::onProcessFinished);
@@ -203,27 +163,21 @@ void RdpPane::connectToHost()
 
     m_pollTimer = new QTimer(this);
     connect(m_pollTimer, &QTimer::timeout, this, &RdpPane::pollForWindow);
-    m_pollTimer->start(100);   // 100 ms — faster detection reduces any residual flash
+    m_pollTimer->start(100);
     QTimer::singleShot(300000, m_pollTimer, &QTimer::stop);
 }
 
 void RdpPane::reconnect()
 {
     disconnectRdp();
-
-    // Reset UI so the status label is visible while reconnecting.
-    m_scrollArea->hide();
     m_status->setText(QString("Reconnecting to %1...").arg(m_host));
     m_status->show();
-
-    // Cached credentials are reused — the credential dialog will not appear.
+    // Cached credentials are reused — no credential prompt.
     QTimer::singleShot(0, this, &RdpPane::connectToHost);
 }
 
 RdpPane::~RdpPane()
 {
-    // If disconnectRdp() was already called (normal close path), m_mstscHwnd
-    // is 0 and m_process is disconnected — these are just safety nets.
     if (m_mstscHwnd) {
         HWND hwnd = reinterpret_cast<HWND>(m_mstscHwnd);
         LONG style = GetWindowLong(hwnd, GWL_STYLE);
@@ -240,8 +194,6 @@ RdpPane::~RdpPane()
     }
     if (!m_credKey.isEmpty())
         runHidden("cmdkey.exe", { QString("/delete:%1").arg(m_credKey) });
-    if (!m_rdpFilePath.isEmpty())
-        QFile::remove(m_rdpFilePath);
 }
 
 void RdpPane::pollForWindow()
@@ -270,39 +222,16 @@ void RdpPane::pollForWindow()
                  WS_EX_CLIENTEDGE | WS_EX_STATICEDGE);
     SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
 
-    if (m_scaleMode) {
-        // Scale mode: embed directly in the RdpPane.  resizeEvent keeps the
-        // mstsc HWND sized to the tab (capped at original session resolution).
-        HWND ours = reinterpret_cast<HWND>(winId());
-        SetParent(hwnd, ours);
-        m_mstscHwnd = reinterpret_cast<WId>(hwnd);
+    HWND ours = reinterpret_cast<HWND>(winId());
+    SetParent(hwnd, ours);
+    m_mstscHwnd = reinterpret_cast<WId>(hwnd);
 
-        const qreal dpr = devicePixelRatioF();
-        SetWindowPos(hwnd, HWND_TOP, 0, 0,
-                     qRound(width() * dpr), qRound(height() * dpr),
-                     SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    const qreal dpr = devicePixelRatioF();
+    SetWindowPos(hwnd, HWND_TOP, 0, 0,
+                 qRound(width() * dpr), qRound(height() * dpr),
+                 SWP_FRAMECHANGED | SWP_SHOWWINDOW);
 
-        m_status->hide();
-    } else {
-        // Scroll mode: embed inside the scroll container at the fixed session
-        // resolution.  The QScrollArea provides Qt scroll bars when the tab
-        // is smaller than the session; no blank area when it is larger.
-        // m_sessionPw/Ph are physical pixels; the container uses logical pixels.
-        const qreal dpr = devicePixelRatioF();
-        m_scrollContainer->resize(qRound(m_sessionPw / dpr), qRound(m_sessionPh / dpr));
-
-        m_scrollArea->show();
-        m_status->hide();
-
-        // Showing the scroll area ensures the container's native HWND exists.
-        HWND containerHwnd = reinterpret_cast<HWND>(m_scrollContainer->winId());
-        SetParent(hwnd, containerHwnd);
-        m_mstscHwnd = reinterpret_cast<WId>(hwnd);
-
-        SetWindowPos(hwnd, HWND_TOP, 0, 0,
-                     m_sessionPw, m_sessionPh,
-                     SWP_FRAMECHANGED | SWP_SHOWWINDOW);
-    }
+    m_status->hide();
 
     // NLA auth is complete — remove the stored credentials.
     if (!m_credKey.isEmpty()) {
@@ -314,37 +243,41 @@ void RdpPane::pollForWindow()
 void RdpPane::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
-    if (!m_mstscHwnd || !m_scaleMode) return;
+    if (!m_mstscHwnd) return;
     if (event->size().width() <= 0 || event->size().height() <= 0) return;
 
-    // Scale mode: resize the mstsc HWND to follow the tab, capped at the
-    // original session resolution to prevent mstsc from going blank when the
-    // window is stretched beyond the session size.
-    // m_sessionPw/Ph are already physical pixels; use them directly as the cap.
+    // Resize the embedded HWND immediately so content fills the tab during
+    // a drag, then reconnect at the new resolution 500 ms after the user
+    // stops resizing so mstsc gets the correct /w /h for the session.
     HWND hwnd = reinterpret_cast<HWND>(m_mstscHwnd);
     const qreal dpr = devicePixelRatioF();
-    int newW = qMin(qRound(event->size().width()  * dpr), m_sessionPw);
-    int newH = qMin(qRound(event->size().height() * dpr), m_sessionPh);
-    SetWindowPos(hwnd, nullptr, 0, 0, newW, newH, SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(hwnd, nullptr,
+                 0, 0,
+                 qRound(event->size().width()  * dpr),
+                 qRound(event->size().height() * dpr),
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+
+    if (!m_resizeTimer) {
+        m_resizeTimer = new QTimer(this);
+        m_resizeTimer->setSingleShot(true);
+        connect(m_resizeTimer, &QTimer::timeout, this, &RdpPane::reconnect);
+    }
+    m_resizeTimer->start(500);
 }
 
 void RdpPane::onProcessFinished()
 {
     if (m_pollTimer) m_pollTimer->stop();
-    m_mstscHwnd = 0; // Window already gone — process exited
+    m_mstscHwnd = 0;
     m_cachedPass.clear(); // Require credential prompt on next manual connect
-    if (!m_rdpFilePath.isEmpty()) {
-        QFile::remove(m_rdpFilePath);
-        m_rdpFilePath.clear();
-    }
     m_status->setText(QString("Disconnected from %1.").arg(m_host));
     m_status->show();
-    m_scrollArea->hide();
 }
 
 void RdpPane::disconnectRdp()
 {
     if (m_pollTimer) m_pollTimer->stop();
+    if (m_resizeTimer) m_resizeTimer->stop();
 
     if (!m_credKey.isEmpty()) {
         runHidden("cmdkey.exe", { QString("/delete:%1").arg(m_credKey) });
@@ -367,12 +300,8 @@ void RdpPane::disconnectRdp()
     }
 
     if (m_process) {
-        m_process->disconnect(); // Prevent onProcessFinished after cleanup
+        m_process->disconnect();
         if (m_process->state() != QProcess::NotRunning)
-            m_process->kill();   // No blocking waitForFinished
-    }
-    if (!m_rdpFilePath.isEmpty()) {
-        QFile::remove(m_rdpFilePath);
-        m_rdpFilePath.clear();
+            m_process->kill();
     }
 }

@@ -7,7 +7,6 @@ class QComboBox;
 class QFontComboBox;
 class QCheckBox;
 class QLineEdit;
-class QRadioButton;
 
 class PreferencesDialog : public QDialog {
     Q_OBJECT
@@ -34,7 +33,6 @@ private:
     QWidget *buildTerminalTab(const QString &fontFamily, int fontSize, const QString &cursorStyle);
     QWidget *buildSSHTab();
     QWidget *buildUpdatesTab();
-    QWidget *buildRdpTab();
 
     QComboBox     *m_themeCombo        = nullptr;
     QCheckBox     *m_debugCheck        = nullptr;
@@ -43,6 +41,4 @@ private:
     QComboBox     *m_cursorCombo       = nullptr;
     QLineEdit     *m_keyPathEdit       = nullptr;
     QCheckBox     *m_checkUpdatesCheck = nullptr;
-    QRadioButton  *m_rdpScaleRadio     = nullptr;
-    QRadioButton  *m_rdpScrollRadio    = nullptr;
 };
