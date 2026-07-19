@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(star_term_cpp VERSION 0.3.0)
+project(star_term VERSION 0.3.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -63,21 +63,21 @@ if(WIN32)
     # app.rc embeds app.ico into the .exe so Windows shows the correct icon.
     # Copy app.ico from the installer directory before building.
     set(APP_ICON_RESOURCE "${CMAKE_CURRENT_SOURCE_DIR}/installer/app.rc")
-    qt_add_executable(star_term_cpp WIN32
+    qt_add_executable(star_term WIN32
         ${SOURCES}
         ${HEADERS}
         ${APP_ICON_RESOURCE}
     )
 else()
-    qt_add_executable(star_term_cpp
+    qt_add_executable(star_term
         ${SOURCES}
         ${HEADERS}
     )
 endif()
 
-target_include_directories(star_term_cpp PRIVATE src)
+target_include_directories(star_term PRIVATE src)
 
-target_link_libraries(star_term_cpp PRIVATE
+target_link_libraries(star_term PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
@@ -88,7 +88,7 @@ target_link_libraries(star_term_cpp PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(star_term_cpp PRIVATE ws2_32)
+    target_link_libraries(star_term PRIVATE ws2_32)
 endif()
 
 # After each Windows build: deploy Qt runtime DLLs and copy vcpkg DLLs next
@@ -100,19 +100,19 @@ if(WIN32)
     get_filename_component(QT_BIN_DIR "${QT_QMAKE_EXECUTABLE}" DIRECTORY)
 
     # 1. windeployqt — copies Qt DLLs, plugins, translations next to the exe.
-    add_custom_command(TARGET star_term_cpp POST_BUILD
+    add_custom_command(TARGET star_term POST_BUILD
         COMMAND "${QT_BIN_DIR}/windeployqt.exe"
             "$<IF:$<CONFIG:Debug>,--debug,--release>"
-            "$<TARGET_FILE:star_term_cpp>"
+            "$<TARGET_FILE:star_term>"
         COMMENT "Deploying Qt runtime DLLs..."
         VERBATIM
     )
 
     # 2. vcpkg runtime DLLs (libssh2, OpenSSL, zlib, etc.)
-    add_custom_command(TARGET star_term_cpp POST_BUILD
+    add_custom_command(TARGET star_term POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_BINARY_DIR}/vcpkg_installed/x64-windows/bin"
-            "$<TARGET_FILE_DIR:star_term_cpp>"
+            "$<TARGET_FILE_DIR:star_term>"
         COMMENT "Copying vcpkg runtime DLLs..."
     )
 endif()
