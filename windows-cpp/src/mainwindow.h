@@ -84,4 +84,5 @@ private:
     QAction *m_sessionsAction     = nullptr;
     QAction *m_remoteFilesAction  = nullptr;
     QAction *m_macrosAction       = nullptr;
+    QAction *m_toggleSidebarAction = nullptr;
 };

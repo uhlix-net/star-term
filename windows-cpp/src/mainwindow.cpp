@@ -47,9 +47,15 @@
 #include <QProcess>
 #include <QTimer>
 
-static const QString APP_VERSION = "0.3.0";
+static const QString APP_VERSION = "0.3.1";
 
-static const QString UPDATE_HISTORY = R"(Version 0.3.0
+static const QString UPDATE_HISTORY = R"(Version 0.3.1
+
+- Collapsible session sidebar, with a toggle button in the main toolbar
+- Session folders can now be removed (right-click menu or the Remove button), even with sessions still inside
+- Close Session now disconnects RDP sessions, not just SSH
+
+Version 0.3.0
 
 - RDP sessions embedded in main window tab via Win32 window embedding
 - Right-click copy/paste with mouse drag selection in terminal
@@ -174,6 +180,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     helpMenu->addSeparator();
     helpMenu->addAction(licenseAction);
 
+    m_toggleSidebarAction = new QAction("Toggle Sidebar", this);
+    m_toggleSidebarAction->setIcon(Icons::sidebarToggleIcon());
+    m_toggleSidebarAction->setToolTip("Show/Hide Sidebar");
+    m_toggleSidebarAction->setCheckable(true);
+    m_toggleSidebarAction->setChecked(true);
+    connect(m_toggleSidebarAction, &QAction::toggled, this, [this](bool checked) {
+        m_leftStack->setVisible(checked);
+    });
+
     // --- Main toolbar ---
     QToolBar *toolbar = new QToolBar("Main Toolbar", this);
     toolbar->setMovable(false);
@@ -181,6 +196,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     toolbar->addAction(m_connectAction);
     toolbar->addAction(m_closeSessionAction);
     toolbar->addSeparator();
+    toolbar->addAction(m_toggleSidebarAction);
     toolbar->addAction(m_multiExecAction);
     toolbar->addSeparator();
     toolbar->addAction(m_preferencesAction);
@@ -192,21 +208,30 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     m_sessionsAction->setCheckable(true);
     m_sessionsAction->setChecked(true);
     connect(m_sessionsAction, &QAction::toggled, this, [this](bool checked) {
-        if (checked) m_leftStack->setCurrentWidget(m_sidebar);
+        if (checked) {
+            m_leftStack->setCurrentWidget(m_sidebar);
+            m_toggleSidebarAction->setChecked(true);
+        }
     });
 
     m_remoteFilesAction = new QAction("Remote Files", this);
     m_remoteFilesAction->setIcon(Icons::directoryIcon());
     m_remoteFilesAction->setCheckable(true);
     connect(m_remoteFilesAction, &QAction::toggled, this, [this](bool checked) {
-        if (checked) m_leftStack->setCurrentWidget(m_remoteBrowser);
+        if (checked) {
+            m_leftStack->setCurrentWidget(m_remoteBrowser);
+            m_toggleSidebarAction->setChecked(true);
+        }
     });
 
     m_macrosAction = new QAction("Macros", this);
     m_macrosAction->setIcon(Icons::macrosIcon());
     m_macrosAction->setCheckable(true);
     connect(m_macrosAction, &QAction::toggled, this, [this](bool checked) {
-        if (checked) m_leftStack->setCurrentWidget(m_macrosPanel);
+        if (checked) {
+            m_leftStack->setCurrentWidget(m_macrosPanel);
+            m_toggleSidebarAction->setChecked(true);
+        }
     });
 
     QActionGroup *panelGroup = new QActionGroup(this);
@@ -566,8 +591,14 @@ void MainWindow::onHostKeyUnknown(const QString &host, const QString &keyType,
 
 void MainWindow::disconnectSession() {
     if (m_multiExecAction->isChecked()) return;
-    SessionPane *pane = qobject_cast<SessionPane*>(m_tabs->currentWidget());
-    if (pane) closePane(pane);
+    QWidget *current = m_tabs->currentWidget();
+    if (SessionPane *pane = qobject_cast<SessionPane*>(current)) {
+        closePane(pane);
+        return;
+    }
+    if (RdpPane *rdp = qobject_cast<RdpPane*>(current)) {
+        closeRdpPane(rdp);
+    }
 }
 
 void MainWindow::showError(const QString &message) {
