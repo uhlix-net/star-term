@@ -15,6 +15,7 @@ public:
 
 signals:
     void updateAvailable(const QString &latestVersion, const QString &releaseUrl);
+    void checkFinished(bool updateAvailable, const QString &latestVersion, const QString &releaseUrl);
 
 private slots:
     void onReply(QNetworkReply *reply);

@@ -29,19 +29,30 @@ void UpdateChecker::checkAsync() {
 
 void UpdateChecker::onReply(QNetworkReply *reply) {
     reply->deleteLater();
-    if (reply->error() != QNetworkReply::NoError) return;
+    if (reply->error() != QNetworkReply::NoError) {
+        emit checkFinished(false, QString(), QString());
+        return;
+    }
 
     QJsonParseError err;
     QJsonDocument doc = QJsonDocument::fromJson(reply->readAll(), &err);
-    if (err.error != QJsonParseError::NoError || !doc.isObject()) return;
+    if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+        emit checkFinished(false, QString(), QString());
+        return;
+    }
 
     QJsonObject obj = doc.object();
     QString tagName    = obj.value("tag_name").toString();
     QString releaseUrl = obj.value("html_url").toString();
-    if (tagName.isEmpty()) return;
+    if (tagName.isEmpty()) {
+        emit checkFinished(false, QString(), QString());
+        return;
+    }
 
-    if (cmpVersion(tagName, m_currentVersion) > 0)
+    bool newer = cmpVersion(tagName, m_currentVersion) > 0;
+    if (newer)
         emit updateAvailable(tagName, releaseUrl);
+    emit checkFinished(newer, tagName, releaseUrl);
 }
 
 // Returns >0 if a is newer than b, 0 if equal, <0 if older.
