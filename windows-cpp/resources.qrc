@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/">
+        <file alias="icon.png">assets/star-term-icon-512.png</file>
+    </qresource>
+</RCC>

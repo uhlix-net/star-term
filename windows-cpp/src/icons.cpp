@@ -107,14 +107,10 @@ QIcon Icons::terminalIcon(int size) {
 }
 
 // -----------------------------------------------------------------------
-// app_icon  — multi-resolution (matches installer/app.ico)
+// app_icon  — loaded from bundled PNG resource
 // -----------------------------------------------------------------------
 QIcon Icons::appIcon() {
-    QIcon icon;
-    for (int sz : {16, 24, 32, 48, 64, 128, 256}) {
-        icon.addPixmap(terminalIcon(sz).pixmap(sz, sz));
-    }
-    return icon;
+    return QIcon(":/icon.png");
 }
 
 // -----------------------------------------------------------------------
