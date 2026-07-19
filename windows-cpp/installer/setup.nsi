@@ -6,6 +6,7 @@
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
+!include "WinMessages.nsh"
 
 !define MUI_ICON "app.ico"
 
@@ -88,6 +89,9 @@ Section "Application" SecApp
     "$INSTDIR\Uninstall.exe" "" "" 0
   CreateShortcut "$DESKTOP\${DISPLAYNAME}.lnk" \
     "$INSTDIR\star_term.exe" "" "$INSTDIR\app.ico" 0
+
+  ; Force Windows to refresh its icon cache so new shortcuts show the correct icon
+  System::Call "Shell32::SHChangeNotify(l 0x8000000, l 0, p 0, p 0)"
 
   ; Uninstaller
   WriteUninstaller "$INSTDIR\Uninstall.exe"
