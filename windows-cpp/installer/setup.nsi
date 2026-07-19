@@ -81,6 +81,11 @@ Section "Application" SecApp
   File "app.ico"
   File "run_star_term.bat"
 
+  ; Delete existing shortcuts before recreating so the .lnk icon cache is flushed
+  Delete "$SMPROGRAMS\${DISPLAYNAME}\${DISPLAYNAME}.lnk"
+  Delete "$SMPROGRAMS\${DISPLAYNAME}\Uninstall ${DISPLAYNAME}.lnk"
+  Delete "$DESKTOP\${DISPLAYNAME}.lnk"
+
   ; Shortcuts
   CreateDirectory "$SMPROGRAMS\${DISPLAYNAME}"
   CreateShortcut "$SMPROGRAMS\${DISPLAYNAME}\${DISPLAYNAME}.lnk" \
