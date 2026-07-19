@@ -33,6 +33,7 @@ private slots:
 private:
     QLabel         *m_status          = nullptr;
     QTimer         *m_pollTimer       = nullptr;
+    QTimer         *m_resizeTimer     = nullptr;
     QProcess       *m_process         = nullptr;
     QString         m_host;
     QString         m_user;
