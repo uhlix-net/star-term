@@ -317,6 +317,30 @@ QIcon Icons::rdpIcon(int size) {
 }
 
 // -----------------------------------------------------------------------
+// sidebarToggleIcon  — panel outline with a filled left column
+// -----------------------------------------------------------------------
+QIcon Icons::sidebarToggleIcon(int size) {
+    QPixmap pm = makePixmap(size);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+
+    QRectF outline(size * 0.1, size * 0.16, size * 0.8, size * 0.68);
+    QPen pen(ICON_FG);
+    pen.setWidthF(size * 0.08);
+    p.setPen(pen);
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(outline, 2, 2);
+
+    p.setPen(Qt::NoPen);
+    p.setBrush(ICON_FG);
+    double colW = outline.width() * 0.36;
+    p.drawRect(QRectF(outline.left(), outline.top(), colW, outline.height()));
+
+    p.end();
+    return QIcon(pm);
+}
+
+// -----------------------------------------------------------------------
 // downArrowPixmap
 // -----------------------------------------------------------------------
 QPixmap Icons::downArrowPixmap(const QColor &color, int size) {

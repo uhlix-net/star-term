@@ -1,0 +1,27 @@
+---
+Notes:
+---
+
+All of the following steps to be perfomed in Visual Studio Developer Command Prompt on Windows, not in Claude WSL session.  This was a Claude recommendation.
+
+---
+Full Binary Be-build (e.g. CMakeLists.txt has been modified)
+---
+
+1. cd \U:\home\huhl\git-repos\star-term\windows-cpp
+2. Delete build folder
+3. U:\home\huhl\git-repos\star-term\windows-cpp\installer>cmake -B build -G "Visual Studio 18 2026" -A x64 -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DQt6_DIR=C:/Qt/6.5.3/msvc2019_64/6.9.3/msvc2022_64/lib/cmake/Qt6
+
+---
+Release Build (if CMakeLists.txt has not been modified)
+---
+
+1. cd \U:\home\huhl\git-repos\star-term\windows-cpp
+2. cmake --build build --config Release
+
+---
+Update Installer
+---
+
+1. cd U:\home\huhl\git-repos\star-term\windows-cpp\installer
+2. c:\Program Files (x86)\NSIS\makensis.exe" setup.nsi

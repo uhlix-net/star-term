@@ -17,6 +17,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
@@ -273,7 +274,7 @@ void SessionSidebar::populate() {
 
     for (const QString &folder : sortedFolders) {
         QTreeWidgetItem *header = new QTreeWidgetItem({folder});
-        header->setFlags(Qt::ItemIsEnabled | Qt::ItemIsDropEnabled);
+        header->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDropEnabled);
         QFont f = header->font(0);
         f.setBold(true);
         header->setFont(0, f);
@@ -328,11 +329,20 @@ void SessionSidebar::onEdit() {
 }
 
 void SessionSidebar::onRemove() {
-    int idx = currentIndex();
-    if (idx < 0) return;
-    m_sessions.removeAt(idx);
-    saveSessions(m_sessions);
-    populate();
+    QTreeWidgetItem *item = m_listWidget->currentItem();
+    if (!item) return;
+
+    QVariant sessionData = item->data(0, Qt::UserRole);
+    if (!sessionData.isNull()) {
+        m_sessions.removeAt(sessionData.toInt());
+        saveSessions(m_sessions);
+        populate();
+        return;
+    }
+
+    QString folderName = item->data(0, FOLDER_ROLE).toString();
+    if (!folderName.isEmpty() && folderName != DEFAULT_FOLDER)
+        onRemoveFolder(folderName);
 }
 
 void SessionSidebar::onConnect() {
@@ -368,14 +378,8 @@ void SessionSidebar::onContextMenu(const QPoint &pos) {
     QAction *newSess        = menu.addAction("New Session...");
     QAction *newFolder      = menu.addAction("New Folder...");
     QAction *renameFolder   = !folderName.isEmpty() ? menu.addAction("Rename Folder") : nullptr;
-    QAction *removeFolder   = nullptr;
-    if (!folderName.isEmpty()) {
-        bool explicit_ = false;
-        for (const auto &v : m_folders)
-            if (v.toString() == folderName) { explicit_ = true; break; }
-        if (explicit_ && folderSessionCount(folderName) == 0)
-            removeFolder = menu.addAction("Remove Folder");
-    }
+    QAction *removeFolder   = (!folderName.isEmpty() && folderName != DEFAULT_FOLDER)
+        ? menu.addAction("Remove Folder") : nullptr;
 
     QAction *chosen = menu.exec(m_listWidget->mapToGlobal(pos));
     if (chosen == newSess)            onAdd(folderName);
@@ -430,6 +434,27 @@ void SessionSidebar::onRenameFolder(const QString &folderName) {
 }
 
 void SessionSidebar::onRemoveFolder(const QString &folderName) {
+    int count = folderSessionCount(folderName);
+    if (count > 0) {
+        int answer = QMessageBox::question(
+            this, "Remove Folder",
+            QString("Folder \"%1\" contains %2 session(s). They will be moved to \"%3\". Continue?")
+                .arg(folderName).arg(count).arg(DEFAULT_FOLDER),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (answer != QMessageBox::Yes) return;
+
+        for (int i = 0; i < m_sessions.size(); ++i) {
+            QJsonObject s = m_sessions[i].toObject();
+            QString f = s.value("folder").toString();
+            if (f.isEmpty()) f = DEFAULT_FOLDER;
+            if (f == folderName) {
+                s["folder"] = "";
+                m_sessions[i] = s;
+            }
+        }
+        saveSessions(m_sessions);
+    }
+
     for (int i = 0; i < m_folders.size(); ++i)
         if (m_folders[i].toString() == folderName) { m_folders.removeAt(i); break; }
     saveFolders(m_folders);
