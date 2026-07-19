@@ -314,16 +314,26 @@ void RdpPane::resizeEvent(QResizeEvent *event)
     if (!m_mstscHwnd) return;
     if (event->size().width() <= 0 || event->size().height() <= 0) return;
 
-    // With dynamic resolution (MS-RDPEDISP) enabled, resizing the embedded HWND
-    // via SetWindowPos sends WM_SIZE to mstsc, which in turn sends DisplayControl
-    // PDUs to the server to update the session resolution live — no reconnect.
-    HWND hwnd = reinterpret_cast<HWND>(m_mstscHwnd);
-    const qreal dpr = devicePixelRatioF();
-    SetWindowPos(hwnd, nullptr,
-                 0, 0,
-                 qRound(event->size().width()  * dpr),
-                 qRound(event->size().height() * dpr),
-                 SWP_NOZORDER | SWP_NOACTIVATE);
+    // Debounce: send one SetWindowPos after the user stops resizing rather than
+    // on every pixel of the drag.  Flooding mstsc with WM_SIZE causes it to
+    // send a DisplayControl PDU on each event, making the remote desktop blank
+    // repeatedly.  One update 300 ms after the drag ends gives a single clean
+    // MS-RDPEDISP resolution change with no mid-drag blanking.
+    if (!m_resizeTimer) {
+        m_resizeTimer = new QTimer(this);
+        m_resizeTimer->setSingleShot(true);
+        connect(m_resizeTimer, &QTimer::timeout, this, [this]() {
+            if (!m_mstscHwnd) return;
+            HWND hwnd = reinterpret_cast<HWND>(m_mstscHwnd);
+            const qreal dpr = devicePixelRatioF();
+            SetWindowPos(hwnd, nullptr,
+                         0, 0,
+                         qRound(width()  * dpr),
+                         qRound(height() * dpr),
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+        });
+    }
+    m_resizeTimer->start(300);
 }
 
 void RdpPane::onProcessFinished()
@@ -348,6 +358,7 @@ void RdpPane::onProcessFinished()
 void RdpPane::disconnectRdp()
 {
     if (m_pollTimer) m_pollTimer->stop();
+    if (m_resizeTimer) m_resizeTimer->stop();
 
     if (m_winEventHook) {
         UnhookWinEvent(reinterpret_cast<HWINEVENTHOOK>(m_winEventHook));
