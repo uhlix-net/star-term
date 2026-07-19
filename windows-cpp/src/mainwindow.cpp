@@ -693,6 +693,16 @@ void MainWindow::showUpdatesDialog() {
     statusLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     statusLabel->setWordWrap(true);
 
+    // --- Startup check preference ---
+    QJsonObject curSettings = loadSettings();
+    QCheckBox *startupCheck = new QCheckBox("Check for updates automatically on startup");
+    startupCheck->setChecked(curSettings.value("check_updates").toBool(true));
+    connect(startupCheck, &QCheckBox::toggled, this, [](bool checked) {
+        QJsonObject s = loadSettings();
+        s["check_updates"] = checked;
+        saveSettings(s);
+    });
+
     // --- Release history ---
     QLabel *histHeader = new QLabel("Release History");
     QFont hf = histHeader->font();
@@ -715,6 +725,7 @@ void MainWindow::showUpdatesDialog() {
     QVBoxLayout *layout = new QVBoxLayout(&dlg);
     layout->addLayout(topRow);
     layout->addWidget(statusLabel);
+    layout->addWidget(startupCheck);
     layout->addSpacing(8);
     layout->addWidget(histHeader);
     layout->addWidget(scrollArea);
