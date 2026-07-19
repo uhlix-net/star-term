@@ -6,6 +6,7 @@
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
+!include "WinMessages.nsh"
 
 !define MUI_ICON "app.ico"
 
@@ -80,6 +81,11 @@ Section "Application" SecApp
   File "app.ico"
   File "run_star_term.bat"
 
+  ; Delete existing shortcuts before recreating so the .lnk icon cache is flushed
+  Delete "$SMPROGRAMS\${DISPLAYNAME}\${DISPLAYNAME}.lnk"
+  Delete "$SMPROGRAMS\${DISPLAYNAME}\Uninstall ${DISPLAYNAME}.lnk"
+  Delete "$DESKTOP\${DISPLAYNAME}.lnk"
+
   ; Shortcuts
   CreateDirectory "$SMPROGRAMS\${DISPLAYNAME}"
   CreateShortcut "$SMPROGRAMS\${DISPLAYNAME}\${DISPLAYNAME}.lnk" \
@@ -88,6 +94,9 @@ Section "Application" SecApp
     "$INSTDIR\Uninstall.exe" "" "" 0
   CreateShortcut "$DESKTOP\${DISPLAYNAME}.lnk" \
     "$INSTDIR\star_term.exe" "" "$INSTDIR\app.ico" 0
+
+  ; Force Windows to refresh its icon cache so new shortcuts show the correct icon
+  System::Call "Shell32::SHChangeNotify(l 0x8000000, l 0, p 0, p 0)"
 
   ; Uninstaller
   WriteUninstaller "$INSTDIR\Uninstall.exe"
