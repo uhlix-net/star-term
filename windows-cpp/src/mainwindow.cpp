@@ -168,8 +168,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     QAction *aboutAction = new QAction("About Star Term", this);
     connect(aboutAction, &QAction::triggered, this, &MainWindow::showAboutDialog);
 
-    QAction *updateHistAction = new QAction("Update History", this);
-    connect(updateHistAction, &QAction::triggered, this, &MainWindow::showUpdateHistoryDialog);
+    QAction *updateHistAction = new QAction("Updates", this);
+    connect(updateHistAction, &QAction::triggered, this, &MainWindow::showUpdatesDialog);
 
     QAction *licenseAction = new QAction("License...", this);
     connect(licenseAction, &QAction::triggered, this, &MainWindow::showLicenseDialog);
@@ -669,28 +669,83 @@ void MainWindow::showAboutDialog() {
     dlg.exec();
 }
 
-void MainWindow::showUpdateHistoryDialog() {
+void MainWindow::showUpdatesDialog() {
     QDialog dlg(this);
-    dlg.setWindowTitle("Update History");
+    dlg.setWindowTitle("Updates");
+
+    // --- Current version row ---
+    QLabel *versionLabel = new QLabel(
+        QString("Current version:  <b>%1</b>").arg(APP_VERSION));
+    versionLabel->setTextFormat(Qt::RichText);
+
+    QPushButton *checkBtn = new QPushButton("Check for Updates");
+    checkBtn->setFixedWidth(160);
+
+    QHBoxLayout *topRow = new QHBoxLayout;
+    topRow->addWidget(versionLabel);
+    topRow->addStretch();
+    topRow->addWidget(checkBtn);
+
+    // --- Status line ---
+    QLabel *statusLabel = new QLabel;
+    statusLabel->setTextFormat(Qt::RichText);
+    statusLabel->setOpenExternalLinks(true);
+    statusLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    statusLabel->setWordWrap(true);
+
+    // --- Release history ---
+    QLabel *histHeader = new QLabel("Release History");
+    QFont hf = histHeader->font();
+    hf.setBold(true);
+    histHeader->setFont(hf);
 
     QLabel *textLabel = new QLabel(UPDATE_HISTORY);
     textLabel->setWordWrap(true);
     textLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     textLabel->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-    textLabel->setContentsMargins(8,8,8,8);
+    textLabel->setContentsMargins(8, 8, 8, 8);
 
     QScrollArea *scrollArea = new QScrollArea;
     scrollArea->setWidgetResizable(true);
     scrollArea->setWidget(textLabel);
 
-    QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Ok);
-    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 
     QVBoxLayout *layout = new QVBoxLayout(&dlg);
+    layout->addLayout(topRow);
+    layout->addWidget(statusLabel);
+    layout->addSpacing(8);
+    layout->addWidget(histHeader);
     layout->addWidget(scrollArea);
     layout->addWidget(buttons);
 
-    dlg.resize(500, 400);
+    // --- Ensure checker exists ---
+    if (!m_updateChecker)
+        m_updateChecker = new UpdateChecker(APP_VERSION, this);
+
+    // --- Check button: fires a single-shot check, result shown inline ---
+    connect(checkBtn, &QPushButton::clicked, &dlg,
+            [this, checkBtn, statusLabel]() {
+        checkBtn->setEnabled(false);
+        statusLabel->setText("Checking...");
+        connect(m_updateChecker, &UpdateChecker::checkFinished,
+                checkBtn, [checkBtn, statusLabel]
+                (bool hasUpdate, const QString &ver, const QString &url) {
+            checkBtn->setEnabled(true);
+            if (hasUpdate)
+                statusLabel->setText(
+                    QString("Version <b>%1</b> is available &mdash; "
+                            "<a href='%2'>download</a>").arg(ver, url));
+            else if (!ver.isEmpty())
+                statusLabel->setText("You are up to date.");
+            else
+                statusLabel->setText("Could not reach update server. Check your network connection.");
+        }, Qt::SingleShotConnection);
+        m_updateChecker->checkAsync();
+    });
+
+    dlg.resize(520, 500);
     dlg.exec();
 }
 
@@ -702,16 +757,18 @@ void MainWindow::showLicenseDialog() {
 void MainWindow::checkForUpdates() {
     QJsonObject settings = loadSettings();
     if (!settings.value("check_updates").toBool(true)) return;
-    if (!m_updateChecker) {
+    if (!m_updateChecker)
         m_updateChecker = new UpdateChecker(APP_VERSION, this);
-        connect(m_updateChecker, &UpdateChecker::updateAvailable,
-                this, [this](const QString &ver, const QString &) {
+
+    connect(m_updateChecker, &UpdateChecker::checkFinished,
+            this, [this](bool hasUpdate, const QString &ver, const QString &) {
+        if (hasUpdate)
             QMessageBox::information(
                 this, "Update Available",
-                QString("Star Term %1 is available on GitHub.\n"
-                        "Visit the Releases page to download the latest installer.").arg(ver));
-        });
-    }
+                QString("Star Term %1 is available.\n"
+                        "Open Help → Updates to download the latest installer.").arg(ver));
+    }, Qt::SingleShotConnection);
+
     m_updateChecker->checkAsync();
 }
 

@@ -29,7 +29,7 @@ public slots:
     void openPreferencesDialog();
     void disconnectSession();
     void showAboutDialog();
-    void showUpdateHistoryDialog();
+    void showUpdatesDialog();
     void showLicenseDialog();
     void exportSessions();
     void importSessions();
