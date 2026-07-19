@@ -47,9 +47,15 @@
 #include <QProcess>
 #include <QTimer>
 
-static const QString APP_VERSION = "0.3.1";
+static const QString APP_VERSION = "0.3.2";
 
-static const QString UPDATE_HISTORY = R"(Version 0.3.1
+static const QString UPDATE_HISTORY = R"(Version 0.3.2
+
+- New application icon
+- Updates dialog: Check for Updates button, inline status, and startup check toggle (moved from Preferences)
+- Update check now reports result whether or not a newer version exists
+
+Version 0.3.1
 
 - Collapsible session sidebar, with a toggle button in the main toolbar
 - Session folders can now be removed (right-click menu or the Remove button), even with sessions still inside
@@ -645,6 +651,10 @@ void MainWindow::showAboutDialog() {
     QDialog dlg(this);
     dlg.setWindowTitle("About Star Term");
 
+    QLabel *iconLabel = new QLabel;
+    iconLabel->setPixmap(Icons::appIcon().pixmap(96, 96));
+    iconLabel->setAlignment(Qt::AlignCenter);
+
     QLabel *versionLabel = new QLabel(
         QString("Star Term v%1").arg(APP_VERSION));
     versionLabel->setAlignment(Qt::AlignCenter);
@@ -662,6 +672,7 @@ void MainWindow::showAboutDialog() {
     connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
 
     QVBoxLayout *layout = new QVBoxLayout(&dlg);
+    layout->addWidget(iconLabel);
     layout->addWidget(versionLabel);
     layout->addWidget(infoLabel);
     layout->addWidget(buttons);

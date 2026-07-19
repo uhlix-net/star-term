@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(star_term VERSION 0.3.1)
+project(star_term VERSION 0.3.2)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,6 +10,8 @@ find_package(OpenSSL REQUIRED)
 find_package(Libssh2 REQUIRED)
 
 qt_standard_project_setup()
+
+qt_add_resources(APP_RESOURCES resources.qrc)
 
 set(SOURCES
     src/main.cpp
@@ -67,11 +69,13 @@ if(WIN32)
         ${SOURCES}
         ${HEADERS}
         ${APP_ICON_RESOURCE}
+        ${APP_RESOURCES}
     )
 else()
     qt_add_executable(star_term
         ${SOURCES}
         ${HEADERS}
+        ${APP_RESOURCES}
     )
 endif()
 
