@@ -3,15 +3,12 @@
 
 #include <QDialog>
 #include <QDialogButtonBox>
-#include <QDir>
-#include <QFile>
 #include <QFormLayout>
 #include <QHash>
 #include <QLabel>
 #include <QLineEdit>
 #include <QResizeEvent>
 #include <QShowEvent>
-#include <QTextStream>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -158,30 +155,11 @@ void RdpPane::connectToHost()
     m_existingWindows.clear();
     EnumWindows(snapshotRdpSessions, reinterpret_cast<LPARAM>(&m_existingWindows));
 
-    // Write a minimal .rdp settings file (no host — host comes from /v on the
-    // command line, so no unsigned-file dialog).  dynamic resolution:i:1 enables
-    // MS-RDPEDISP: when the embedded HWND is resized via SetWindowPos, mstsc
-    // sends DisplayControl PDUs to update the server-side resolution live
-    // without disconnecting.
-    m_rdpFilePath = QDir::tempPath() +
-                    QString("/star_term_rdp_%1.rdp").arg(reinterpret_cast<quintptr>(this));
-    {
-        QFile f(m_rdpFilePath);
-        if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            QTextStream ts(&f);
-            ts << "dynamic resolution:i:1\r\n";
-        } else {
-            m_rdpFilePath.clear();
-        }
-    }
-
     const qreal dpr = devicePixelRatioF();
     const int pw = qRound(width()  * dpr);
     const int ph = qRound(height() * dpr);
 
     QStringList args;
-    if (!m_rdpFilePath.isEmpty())
-        args << m_rdpFilePath;
     args << QString("/v:%1:%2").arg(m_host).arg(m_port);
     if (pw > 0 && ph > 0)
         args << QString("/w:%1").arg(pw) << QString("/h:%1").arg(ph);
@@ -294,8 +272,6 @@ RdpPane::~RdpPane()
     }
     if (!m_credKey.isEmpty())
         runHidden("cmdkey.exe", { QString("/delete:%1").arg(m_credKey) });
-    if (!m_rdpFilePath.isEmpty())
-        QFile::remove(m_rdpFilePath);
 }
 
 void RdpPane::pollForWindow()
@@ -314,26 +290,24 @@ void RdpPane::resizeEvent(QResizeEvent *event)
     if (!m_mstscHwnd) return;
     if (event->size().width() <= 0 || event->size().height() <= 0) return;
 
-    // Debounce: send one SetWindowPos after the user stops resizing rather than
-    // on every pixel of the drag.  Flooding mstsc with WM_SIZE causes it to
-    // send a DisplayControl PDU on each event, making the remote desktop blank
-    // repeatedly.  One update 300 ms after the drag ends gives a single clean
-    // MS-RDPEDISP resolution change with no mid-drag blanking.
+    // Resize the HWND immediately so the session fills the tab during the drag,
+    // then reconnect at the correct resolution 500 ms after the drag settles.
+    // mstsc stretches its content to fill the HWND during the drag; the
+    // reconnect (using cached credentials) restores the native resolution.
+    HWND hwnd = reinterpret_cast<HWND>(m_mstscHwnd);
+    const qreal dpr = devicePixelRatioF();
+    SetWindowPos(hwnd, nullptr,
+                 0, 0,
+                 qRound(event->size().width()  * dpr),
+                 qRound(event->size().height() * dpr),
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+
     if (!m_resizeTimer) {
         m_resizeTimer = new QTimer(this);
         m_resizeTimer->setSingleShot(true);
-        connect(m_resizeTimer, &QTimer::timeout, this, [this]() {
-            if (!m_mstscHwnd) return;
-            HWND hwnd = reinterpret_cast<HWND>(m_mstscHwnd);
-            const qreal dpr = devicePixelRatioF();
-            SetWindowPos(hwnd, nullptr,
-                         0, 0,
-                         qRound(width()  * dpr),
-                         qRound(height() * dpr),
-                         SWP_NOZORDER | SWP_NOACTIVATE);
-        });
+        connect(m_resizeTimer, &QTimer::timeout, this, &RdpPane::reconnect);
     }
-    m_resizeTimer->start(300);
+    m_resizeTimer->start(500);
 }
 
 void RdpPane::onProcessFinished()
@@ -347,10 +321,6 @@ void RdpPane::onProcessFinished()
     }
     m_mstscHwnd = 0;
     m_cachedPass.clear();
-    if (!m_rdpFilePath.isEmpty()) {
-        QFile::remove(m_rdpFilePath);
-        m_rdpFilePath.clear();
-    }
     m_status->setText(QString("Disconnected from %1.").arg(m_host));
     m_status->show();
 }
@@ -365,11 +335,6 @@ void RdpPane::disconnectRdp()
         m_winEventHook = 0;
         if (m_process)
             s_paneByPid.remove(static_cast<DWORD>(m_process->processId()));
-    }
-
-    if (!m_rdpFilePath.isEmpty()) {
-        QFile::remove(m_rdpFilePath);
-        m_rdpFilePath.clear();
     }
 
     if (!m_credKey.isEmpty()) {

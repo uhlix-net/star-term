@@ -40,7 +40,6 @@ private:
     int             m_port            = 3389;
     QString         m_credKey;
     QString         m_cachedPass;
-    QString         m_rdpFilePath;
     WId             m_mstscHwnd       = 0;
     quintptr        m_winEventHook    = 0;
     QSet<quintptr>  m_existingWindows;
