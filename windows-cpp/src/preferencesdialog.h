@@ -21,7 +21,7 @@ public:
     // Returns {"font_family", "font_size", "cursor_style"}
     QJsonObject getTerminalSettings() const;
 
-    // Returns {"theme", "debug", "check_updates", "rdp_resize_mode", ...}
+    // Returns {"theme", "debug"}
     QJsonObject getGeneralSettings() const;
 
 private slots:
@@ -32,13 +32,11 @@ private:
     QWidget *buildGeneralTab(const QString &themeName);
     QWidget *buildTerminalTab(const QString &fontFamily, int fontSize, const QString &cursorStyle);
     QWidget *buildSSHTab();
-    QWidget *buildUpdatesTab();
 
-    QComboBox     *m_themeCombo        = nullptr;
-    QCheckBox     *m_debugCheck        = nullptr;
-    QFontComboBox *m_fontCombo         = nullptr;
-    QComboBox     *m_sizeCombo         = nullptr;
-    QComboBox     *m_cursorCombo       = nullptr;
-    QLineEdit     *m_keyPathEdit       = nullptr;
-    QCheckBox     *m_checkUpdatesCheck = nullptr;
+    QComboBox     *m_themeCombo  = nullptr;
+    QCheckBox     *m_debugCheck  = nullptr;
+    QFontComboBox *m_fontCombo   = nullptr;
+    QComboBox     *m_sizeCombo   = nullptr;
+    QComboBox     *m_cursorCombo = nullptr;
+    QLineEdit     *m_keyPathEdit = nullptr;
 };
