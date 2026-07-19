@@ -86,17 +86,17 @@ Section "Application" SecApp
   Delete "$SMPROGRAMS\${DISPLAYNAME}\Uninstall ${DISPLAYNAME}.lnk"
   Delete "$DESKTOP\${DISPLAYNAME}.lnk"
 
-  ; Shortcuts
+  ; Shortcuts — use exe as icon source so the embedded resource is read directly
   CreateDirectory "$SMPROGRAMS\${DISPLAYNAME}"
   CreateShortcut "$SMPROGRAMS\${DISPLAYNAME}\${DISPLAYNAME}.lnk" \
-    "$INSTDIR\star_term.exe" "" "$INSTDIR\app.ico" 0
+    "$INSTDIR\star_term.exe" "" "$INSTDIR\star_term.exe" 0
   CreateShortcut "$SMPROGRAMS\${DISPLAYNAME}\Uninstall ${DISPLAYNAME}.lnk" \
     "$INSTDIR\Uninstall.exe" "" "" 0
   CreateShortcut "$DESKTOP\${DISPLAYNAME}.lnk" \
-    "$INSTDIR\star_term.exe" "" "$INSTDIR\app.ico" 0
+    "$INSTDIR\star_term.exe" "" "$INSTDIR\star_term.exe" 0
 
-  ; Force Windows to refresh its icon cache so new shortcuts show the correct icon
-  System::Call "Shell32::SHChangeNotify(l 0x8000000, l 0, p 0, p 0)"
+  ; Force a synchronous shell icon cache flush (SHCNE_ASSOCCHANGED | SHCNF_FLUSH)
+  System::Call "Shell32::SHChangeNotify(l 0x8000000, l 0x1000, p 0, p 0)"
 
   ; Uninstaller
   WriteUninstaller "$INSTDIR\Uninstall.exe"
