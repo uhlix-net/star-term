@@ -54,7 +54,7 @@ int main(int argc, char *argv[]) {
     g_prevTerminate = std::set_terminate(terminateHandler);
 
     QApplication app(argc, argv);
-    app.setApplicationName("star_term_cpp");
+    app.setApplicationName("Star Term");
     app.setApplicationVersion("0.3.0");
     app.setOrganizationName("uhlix.net");
 

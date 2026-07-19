@@ -1,4 +1,4 @@
-!define APPNAME "star_term_cpp"
+!define APPNAME "star_term"
 !define DISPLAYNAME "Star Term"
 !define VERSION "0.3.0"
 !define PUBLISHER "uhlix.net"
@@ -9,8 +9,8 @@
 
 !define MUI_ICON "app.ico"
 
-Name "${APPNAME}"
-OutFile "Output\star_term_cpp_setup.exe"
+Name "${DISPLAYNAME}"
+OutFile "Output\star_term_setup.exe"
 InstallDir "$PROGRAMFILES64\${APPNAME}"
 InstallDirRegKey HKLM "${UNINSTKEY}" "InstallLocation"
 RequestExecutionLevel admin
@@ -78,16 +78,16 @@ Section "Application" SecApp
   SetOutPath "$INSTDIR"
   File /r /x *.pdb /x *.lib /x *.exp "..\build\Release\*.*"
   File "app.ico"
-  File "run_star_term_cpp.bat"
+  File "run_star_term.bat"
 
   ; Shortcuts
   CreateDirectory "$SMPROGRAMS\${DISPLAYNAME}"
   CreateShortcut "$SMPROGRAMS\${DISPLAYNAME}\${DISPLAYNAME}.lnk" \
-    "$INSTDIR\star_term_cpp.exe" "" "$INSTDIR\app.ico" 0
+    "$INSTDIR\star_term.exe" "" "$INSTDIR\app.ico" 0
   CreateShortcut "$SMPROGRAMS\${DISPLAYNAME}\Uninstall ${DISPLAYNAME}.lnk" \
     "$INSTDIR\Uninstall.exe" "" "" 0
   CreateShortcut "$DESKTOP\${DISPLAYNAME}.lnk" \
-    "$INSTDIR\star_term_cpp.exe" "" "$INSTDIR\app.ico" 0
+    "$INSTDIR\star_term.exe" "" "$INSTDIR\app.ico" 0
 
   ; Uninstaller
   WriteUninstaller "$INSTDIR\Uninstall.exe"
