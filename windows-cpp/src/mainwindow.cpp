@@ -568,7 +568,14 @@ void MainWindow::startSession(SessionPane *pane, const QJsonObject &params) {
 
     connect(session, &SSHSession::dataReceived, pane->terminal, &TerminalWidget::feed);
     connect(session, &SSHSession::dataReceived, this, [this, pane](const QByteArray &data) {
-        if (QFile *f = m_sessionLogs.value(pane)) f->write(data);
+        if (QFile *f = m_sessionLogs.value(pane)) {
+            static QRegularExpression s_ansi(
+                R"(\x1B(?:[@-Z\-_]|\[[0-9;?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)))");
+            QString text = QString::fromUtf8(data);
+            text.remove(s_ansi);
+            f->write(text.toUtf8());
+            f->flush();
+        }
     });
     connect(session, &SSHSession::connectionError, this, &MainWindow::showError);
     connect(session, &SSHSession::connectionError, this, [this, pane](const QString&) {
@@ -615,7 +622,7 @@ void MainWindow::onSessionEnded(SessionPane *pane) {
 // -----------------------------------------------------------------------
 void MainWindow::startPaneLogging(SessionPane *pane) {
     if (m_sessionLogs.contains(pane)) return;
-    QString logsDir = getAppDataDir() + "/logs";
+    QString logsDir = getAppDataDir() + "/session_logs";
     QDir().mkpath(logsDir);
     QString ts = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
     QString safeName = pane->name;
