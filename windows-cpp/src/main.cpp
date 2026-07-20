@@ -55,7 +55,7 @@ int main(int argc, char *argv[]) {
 
     QApplication app(argc, argv);
     app.setApplicationName("Star Term");
-    app.setApplicationVersion("0.3.2");
+    app.setApplicationVersion("0.3.3");
     app.setOrganizationName("uhlix.net");
 
     // Apply stylesheet (must happen after QApplication, before any pixmaps)

@@ -49,9 +49,15 @@
 #include <QTimer>
 #include <QUrl>
 
-static const QString APP_VERSION = "0.3.2";
+static const QString APP_VERSION = "0.3.3";
 
-static const QString UPDATE_HISTORY = R"(Version 0.3.2
+static const QString UPDATE_HISTORY = R"(Version 0.3.3
+
+- SSH terminal receives focus automatically when connection is established
+- Startup update check prompts Yes/No and opens browser directly to release page
+- Installer silently force-closes Star Term if graceful shutdown fails
+
+Version 0.3.2
 
 - New application icon
 - Updates dialog: Check for Updates button, inline status, and startup check toggle (moved from Preferences)
