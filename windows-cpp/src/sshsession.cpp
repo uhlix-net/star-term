@@ -172,13 +172,29 @@ bool SSHSession::checkKnownHost(const char *fingerprint, size_t /*len*/,
         ? QString("[%1]:%2").arg(m_host).arg(m_port)
         : m_host;
     QByteArray hostWithPortBytes = hostWithPort.toUtf8();
+
+    // Map libssh2 host key type to the known_hosts algorithm flag.
+    // Without this flag libssh2 writes an invalid entry (no algorithm name).
+    int keyTypeFlag;
+    switch (type) {
+        case LIBSSH2_HOSTKEY_TYPE_RSA:      keyTypeFlag = LIBSSH2_KNOWNHOST_KEY_SSHRSA;    break;
+        case LIBSSH2_HOSTKEY_TYPE_DSS:      keyTypeFlag = LIBSSH2_KNOWNHOST_KEY_SSHDSS;    break;
+        case LIBSSH2_HOSTKEY_TYPE_ECDSA_256:keyTypeFlag = LIBSSH2_KNOWNHOST_KEY_ECDSA_256; break;
+        case LIBSSH2_HOSTKEY_TYPE_ECDSA_384:keyTypeFlag = LIBSSH2_KNOWNHOST_KEY_ECDSA_384; break;
+        case LIBSSH2_HOSTKEY_TYPE_ECDSA_521:keyTypeFlag = LIBSSH2_KNOWNHOST_KEY_ECDSA_521; break;
+        case LIBSSH2_HOSTKEY_TYPE_ED25519:  keyTypeFlag = LIBSSH2_KNOWNHOST_KEY_ED25519;   break;
+        default:                            keyTypeFlag = LIBSSH2_KNOWNHOST_KEY_UNKNOWN;    break;
+    }
+
     libssh2_knownhost_addc(
         kh, hostWithPortBytes.constData(), nullptr,
         key, keyLen,
         nullptr, 0,
-        LIBSSH2_KNOWNHOST_TYPE_PLAIN | LIBSSH2_KNOWNHOST_KEYENC_RAW,
+        LIBSSH2_KNOWNHOST_TYPE_PLAIN | LIBSSH2_KNOWNHOST_KEYENC_RAW | keyTypeFlag,
         nullptr);
-    libssh2_knownhost_writefile(kh, pathBytes.constData(), LIBSSH2_KNOWNHOST_FILE_OPENSSH);
+    int rc = libssh2_knownhost_writefile(kh, pathBytes.constData(), LIBSSH2_KNOWNHOST_FILE_OPENSSH);
+    if (rc != 0)
+        debugLog(QString("known_hosts write failed: rc=%1 path=%2").arg(rc).arg(knownHostsPath));
     libssh2_knownhost_free(kh);
     return true;
 }
