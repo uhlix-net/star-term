@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "colors.h"
 #include "config.h"
 #include "connectiondialog.h"
 #include "icons.h"
@@ -42,16 +43,25 @@
 #include <QMenuBar>
 #include <QMenu>
 #include <QCheckBox>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QPushButton>
 #include <QApplication>
+#include <QDir>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QTimer>
 #include <QUrl>
 
-static const QString APP_VERSION = "0.3.3";
+static const QString APP_VERSION = "0.4.0";
 
-static const QString UPDATE_HISTORY = R"(Version 0.3.3
+static const QString UPDATE_HISTORY = R"(Version 0.4.0
+
+- Session logging toggle in main toolbar — logs terminal output to AppData\star_term\logs\
+- Terminal color themes: 10 presets (Default, Solarized, Dracula, Monokai, Nord, One Dark, Gruvbox, Campbell, PowerShell) selectable live in Preferences → Terminal
+- Fixed SSH known_hosts not saving to AppData\Roaming\star_term\known_hosts
+
+Version 0.3.3
 
 - SSH terminal receives focus automatically when connection is established
 - Startup update check prompts Yes/No and opens browser directly to release page
@@ -203,6 +213,21 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         m_leftStack->setVisible(checked);
     });
 
+    // --- Session logging action ---
+    m_sessionLoggingAction = new QAction("Session Logging", this);
+    m_sessionLoggingAction->setIcon(Icons::logIcon());
+    m_sessionLoggingAction->setToolTip("Session Logging — log terminal output to file");
+    m_sessionLoggingAction->setCheckable(true);
+    m_sessionLoggingAction->setChecked(loadSettings().value("session_logging").toBool(false));
+    connect(m_sessionLoggingAction, &QAction::toggled,
+            this, &MainWindow::toggleSessionLogging);
+
+    // Apply saved color theme before showing
+    {
+        QJsonObject s = loadSettings();
+        setColorTheme(s.value("color_theme").toString("Default"));
+    }
+
     // --- Main toolbar ---
     QToolBar *toolbar = new QToolBar("Main Toolbar", this);
     toolbar->setMovable(false);
@@ -212,6 +237,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     toolbar->addSeparator();
     toolbar->addAction(m_toggleSidebarAction);
     toolbar->addAction(m_multiExecAction);
+    toolbar->addAction(m_sessionLoggingAction);
     toolbar->addSeparator();
     toolbar->addAction(m_preferencesAction);
     addToolBar(toolbar);
@@ -299,6 +325,7 @@ void MainWindow::addPane(SessionPane *pane) {
 }
 
 void MainWindow::closePane(SessionPane *pane) {
+    stopPaneLogging(pane);
     pane->disconnectSession();
     if (m_panes.contains(pane)) m_panes.removeAll(pane);
     if (m_remoteBrowser) {
@@ -539,7 +566,10 @@ void MainWindow::startSession(SessionPane *pane, const QJsonObject &params) {
     );
     pane->session = session;
 
-    connect(session, &SSHSession::dataReceived,    pane->terminal, &TerminalWidget::feed);
+    connect(session, &SSHSession::dataReceived, pane->terminal, &TerminalWidget::feed);
+    connect(session, &SSHSession::dataReceived, this, [this, pane](const QByteArray &data) {
+        if (QFile *f = m_sessionLogs.value(pane)) f->write(data);
+    });
     connect(session, &SSHSession::connectionError, this, &MainWindow::showError);
     connect(session, &SSHSession::connectionError, this, [this, pane](const QString&) {
         onSessionEnded(pane);
@@ -568,6 +598,8 @@ void MainWindow::onSessionConnected(SessionPane *pane) {
     if (pane == m_tabs->currentWidget())
         m_remoteBrowser->setPane(pane);
     pane->startStatsWorker();
+    if (m_sessionLoggingAction->isChecked())
+        startPaneLogging(pane);
 }
 
 void MainWindow::onSessionEnded(SessionPane *pane) {
@@ -576,6 +608,44 @@ void MainWindow::onSessionEnded(SessionPane *pane) {
         m_statusBar->updateStats({});
     if (m_panes.contains(pane))
         pane->reconnectBtn->setVisible(true);
+}
+
+// -----------------------------------------------------------------------
+// Session logging
+// -----------------------------------------------------------------------
+void MainWindow::startPaneLogging(SessionPane *pane) {
+    if (m_sessionLogs.contains(pane)) return;
+    QString logsDir = getAppDataDir() + "/logs";
+    QDir().mkpath(logsDir);
+    QString ts = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+    QString safeName = pane->name;
+    safeName.replace(QRegularExpression("[^a-zA-Z0-9_-]"), "_");
+    QString path = logsDir + "/" + safeName + "_" + ts + ".log";
+    QFile *f = new QFile(path, this);
+    if (f->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text))
+        m_sessionLogs[pane] = f;
+    else
+        delete f;
+}
+
+void MainWindow::stopPaneLogging(SessionPane *pane) {
+    if (QFile *f = m_sessionLogs.take(pane)) {
+        f->close();
+        f->deleteLater();
+    }
+}
+
+void MainWindow::toggleSessionLogging(bool enabled) {
+    QJsonObject s = loadSettings();
+    s["session_logging"] = enabled;
+    saveSettings(s);
+    if (enabled) {
+        for (SessionPane *pane : m_panes)
+            if (pane->session) startPaneLogging(pane);
+    } else {
+        for (SessionPane *pane : m_panes)
+            stopPaneLogging(pane);
+    }
 }
 
 void MainWindow::reconnectPane(SessionPane *pane) {
@@ -628,22 +698,34 @@ void MainWindow::showError(const QString &message) {
 // -----------------------------------------------------------------------
 void MainWindow::openPreferencesDialog() {
     QJsonObject settings = loadSettings();
+    QString prevColorTheme = settings.value("color_theme").toString("Default");
 
     PreferencesDialog dlg(
         this,
         settings.value("font_family").toString("Courier New"),
         settings.value("font_size").toInt(10),
         settings.value("cursor_style").toString("underline"),
-        settings.value("theme").toString("dark")
+        settings.value("theme").toString("dark"),
+        prevColorTheme
     );
+
+    // Live color theme preview while dialog is open
+    connect(&dlg, &PreferencesDialog::colorThemePreviewRequested,
+            this, [this](const QString &name) {
+        setColorTheme(name);
+        for (SessionPane *pane : m_panes) pane->terminal->update();
+    });
+
     if (dlg.exec()) {
         QJsonObject newTermSettings = dlg.getTerminalSettings();
+        setColorTheme(newTermSettings["color_theme"].toString("Default"));
         for (SessionPane *pane : m_panes) {
             pane->applySettings(
                 newTermSettings["font_family"].toString(),
                 newTermSettings["font_size"].toInt(),
                 newTermSettings["cursor_style"].toString()
             );
+            pane->terminal->update();
         }
         QJsonObject newGenSettings = dlg.getGeneralSettings();
         settings = loadSettings();
@@ -656,6 +738,10 @@ void MainWindow::openPreferencesDialog() {
         clearStylesheetCache();
         qApp->setStyleSheet(
             getStylesheet(settings.value("theme").toString("dark")));
+    } else {
+        // Cancelled — revert live color theme preview
+        setColorTheme(prevColorTheme);
+        for (SessionPane *pane : m_panes) pane->terminal->update();
     }
 }
 

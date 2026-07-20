@@ -16,7 +16,8 @@ public:
         const QString &fontFamily  = "Courier New",
         int fontSize               = 10,
         const QString &cursorStyle = "underline",
-        const QString &themeName   = "dark");
+        const QString &themeName   = "dark",
+        const QString &colorTheme  = "Default");
 
     // Returns {"font_family", "font_size", "cursor_style"}
     QJsonObject getTerminalSettings() const;
@@ -24,19 +25,24 @@ public:
     // Returns {"theme", "debug"}
     QJsonObject getGeneralSettings() const;
 
+signals:
+    void colorThemePreviewRequested(const QString &themeName);
+
 private slots:
     void browseKey();
     void removeKey();
 
 private:
     QWidget *buildGeneralTab(const QString &themeName);
-    QWidget *buildTerminalTab(const QString &fontFamily, int fontSize, const QString &cursorStyle);
+    QWidget *buildTerminalTab(const QString &fontFamily, int fontSize,
+                              const QString &cursorStyle, const QString &colorTheme);
     QWidget *buildSSHTab();
 
-    QComboBox     *m_themeCombo  = nullptr;
-    QCheckBox     *m_debugCheck  = nullptr;
-    QFontComboBox *m_fontCombo   = nullptr;
-    QComboBox     *m_sizeCombo   = nullptr;
-    QComboBox     *m_cursorCombo = nullptr;
-    QLineEdit     *m_keyPathEdit = nullptr;
+    QComboBox     *m_themeCombo       = nullptr;
+    QCheckBox     *m_debugCheck       = nullptr;
+    QFontComboBox *m_fontCombo        = nullptr;
+    QComboBox     *m_sizeCombo        = nullptr;
+    QComboBox     *m_cursorCombo      = nullptr;
+    QComboBox     *m_colorThemeCombo  = nullptr;
+    QLineEdit     *m_keyPathEdit      = nullptr;
 };

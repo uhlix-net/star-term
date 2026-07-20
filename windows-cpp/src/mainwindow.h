@@ -1,4 +1,6 @@
 #pragma once
+#include <QFile>
+#include <QHash>
 #include <QMainWindow>
 #include <QList>
 #include <QJsonObject>
@@ -63,6 +65,9 @@ private:
     void populateMultiExecGrid();
     void populateTabs();
     void resizeForMultiExec();
+    void startPaneLogging(SessionPane *pane);
+    void stopPaneLogging(SessionPane *pane);
+    void toggleSessionLogging(bool enabled);
 
     QList<SessionPane*>  m_panes;
     SessionSidebar      *m_sidebar          = nullptr;
@@ -77,12 +82,15 @@ private:
     QSplitter           *m_splitter         = nullptr;
     SystemStatusBar     *m_statusBar        = nullptr;
 
-    QAction *m_connectAction      = nullptr;
-    QAction *m_closeSessionAction = nullptr;
-    QAction *m_multiExecAction    = nullptr;
-    QAction *m_preferencesAction  = nullptr;
-    QAction *m_sessionsAction     = nullptr;
-    QAction *m_remoteFilesAction  = nullptr;
-    QAction *m_macrosAction       = nullptr;
-    QAction *m_toggleSidebarAction = nullptr;
+    QHash<SessionPane*, QFile*> m_sessionLogs;
+
+    QAction *m_connectAction        = nullptr;
+    QAction *m_closeSessionAction   = nullptr;
+    QAction *m_multiExecAction      = nullptr;
+    QAction *m_preferencesAction    = nullptr;
+    QAction *m_sessionsAction       = nullptr;
+    QAction *m_remoteFilesAction    = nullptr;
+    QAction *m_macrosAction         = nullptr;
+    QAction *m_toggleSidebarAction  = nullptr;
+    QAction *m_sessionLoggingAction = nullptr;
 };

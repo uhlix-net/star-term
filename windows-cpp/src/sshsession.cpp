@@ -2,6 +2,8 @@
 #include "config.h"
 #include "debug.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QMutexLocker>
 #include <QByteArray>
 #include <QString>
@@ -118,10 +120,15 @@ static QString libssh2TypeName(int type) {
 bool SSHSession::checkKnownHost(const char *fingerprint, size_t /*len*/,
                                  int type, const char *key, size_t keyLen) {
     QString knownHostsPath = getKnownHostsPath();
+    // Ensure parent directory exists (libssh2 writefile won't create it)
+    QDir().mkpath(QFileInfo(knownHostsPath).absolutePath());
+
     LIBSSH2_KNOWNHOSTS *kh = libssh2_knownhost_init(m_session);
     if (!kh) return false;
 
-    QByteArray pathBytes = knownHostsPath.toUtf8();
+    // Use native separators + local 8-bit encoding so libssh2's fopen() works
+    // correctly on Windows (fopen uses ANSI codepage, not UTF-8)
+    QByteArray pathBytes = QDir::toNativeSeparators(knownHostsPath).toLocal8Bit();
     libssh2_knownhost_readfile(kh, pathBytes.constData(), LIBSSH2_KNOWNHOST_FILE_OPENSSH);
 
     struct libssh2_knownhost *found = nullptr;

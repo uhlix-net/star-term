@@ -1,4 +1,5 @@
 #include "preferencesdialog.h"
+#include "colors.h"
 #include "config.h"
 #include "debug.h"
 
@@ -24,15 +25,16 @@ PreferencesDialog::PreferencesDialog(
     const QString &fontFamily,
     int fontSize,
     const QString &cursorStyle,
-    const QString &themeName)
+    const QString &themeName,
+    const QString &colorTheme)
     : QDialog(parent)
 {
     setWindowTitle("Preferences");
 
     QTabWidget *tabs = new QTabWidget;
-    tabs->addTab(buildGeneralTab(themeName),                          "General");
-    tabs->addTab(buildTerminalTab(fontFamily, fontSize, cursorStyle), "Terminal");
-    tabs->addTab(buildSSHTab(),                                       "SSH Key");
+    tabs->addTab(buildGeneralTab(themeName),                                         "General");
+    tabs->addTab(buildTerminalTab(fontFamily, fontSize, cursorStyle, colorTheme),    "Terminal");
+    tabs->addTab(buildSSHTab(),                                                      "SSH Key");
 
     QDialogButtonBox *buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
@@ -121,7 +123,8 @@ void PreferencesDialog::removeKey() {
 
 // -----------------------------------------------------------------------
 QWidget *PreferencesDialog::buildTerminalTab(
-    const QString &fontFamily, int fontSize, const QString &cursorStyle)
+    const QString &fontFamily, int fontSize,
+    const QString &cursorStyle, const QString &colorTheme)
 {
     QWidget *w = new QWidget;
 
@@ -141,10 +144,17 @@ QWidget *PreferencesDialog::buildTerminalTab(
     m_cursorCombo->addItems({"Underline", "Block"});
     m_cursorCombo->setCurrentText(cursorStyle == "block" ? "Block" : "Underline");
 
+    m_colorThemeCombo = new QComboBox;
+    m_colorThemeCombo->addItems(availableThemeNames());
+    m_colorThemeCombo->setCurrentText(colorTheme);
+    connect(m_colorThemeCombo, &QComboBox::currentTextChanged,
+            this, &PreferencesDialog::colorThemePreviewRequested);
+
     QFormLayout *form = new QFormLayout(w);
     form->addRow("Font:",         m_fontCombo);
     form->addRow("Size:",         m_sizeCombo);
     form->addRow("Cursor style:", m_cursorCombo);
+    form->addRow("Color theme:",  m_colorThemeCombo);
     return w;
 }
 
@@ -157,6 +167,7 @@ QJsonObject PreferencesDialog::getTerminalSettings() const {
     s["font_family"]  = m_fontCombo->currentFont().family();
     s["font_size"]    = sz;
     s["cursor_style"] = m_cursorCombo->currentText().toLower();
+    s["color_theme"]  = m_colorThemeCombo->currentText();
     return s;
 }
 
