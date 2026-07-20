@@ -42,10 +42,12 @@
 #include <QMenuBar>
 #include <QMenu>
 #include <QCheckBox>
+#include <QDesktopServices>
 #include <QPushButton>
 #include <QApplication>
 #include <QProcess>
 #include <QTimer>
+#include <QUrl>
 
 static const QString APP_VERSION = "0.3.2";
 
@@ -553,6 +555,10 @@ void MainWindow::startSession(SessionPane *pane, const QJsonObject &params) {
 }
 
 void MainWindow::onSessionConnected(SessionPane *pane) {
+    if (!m_multiExecAction->isChecked()) {
+        m_tabs->setCurrentWidget(pane);
+        pane->terminal->setFocus();
+    }
     if (pane == m_tabs->currentWidget())
         m_remoteBrowser->setPane(pane);
     pane->startStatsWorker();
@@ -783,12 +789,14 @@ void MainWindow::checkForUpdates() {
         m_updateChecker = new UpdateChecker(APP_VERSION, this);
 
     connect(m_updateChecker, &UpdateChecker::checkFinished,
-            this, [this](bool hasUpdate, const QString &ver, const QString &) {
-        if (hasUpdate)
-            QMessageBox::information(
-                this, "Update Available",
-                QString("Star Term %1 is available.\n"
-                        "Open Help → Updates to download the latest installer.").arg(ver));
+            this, [this](bool hasUpdate, const QString &ver, const QString &url) {
+        if (!hasUpdate) return;
+        int ret = QMessageBox::question(
+            this, "Update Available",
+            QString("Star Term %1 is available.\n\nWould you like to download it now?").arg(ver),
+            QMessageBox::Yes | QMessageBox::No);
+        if (ret == QMessageBox::Yes)
+            QDesktopServices::openUrl(QUrl(url));
     }, Qt::SingleShotConnection);
 
     m_updateChecker->checkAsync();

@@ -48,9 +48,11 @@ Function .onInit
     IntCmp $0 0 not_running still_running still_running
 
   still_running:
-    MessageBox MB_OK|MB_ICONEXCLAMATION \
-      "Star Term could not be closed automatically.$\n$\nPlease close it manually and run the installer again."
-    Abort
+    ; Graceful close failed — force terminate and clean up silently
+    ExecWait 'taskkill.exe /F /IM star_term.exe'
+    Sleep 500
+    RMDir /r "$TEMP\star_term_*"
+    Goto not_running
 
   abort_install:
     Abort
