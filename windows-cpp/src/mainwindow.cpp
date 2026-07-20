@@ -218,7 +218,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     m_sessionLoggingAction->setIcon(Icons::logIcon());
     m_sessionLoggingAction->setToolTip("Session Logging — log terminal output to file");
     m_sessionLoggingAction->setCheckable(true);
-    m_sessionLoggingAction->setChecked(loadSettings().value("session_logging").toBool(false));
+    m_sessionLoggingAction->setChecked(false);
     connect(m_sessionLoggingAction, &QAction::toggled,
             this, &MainWindow::toggleSessionLogging);
 
