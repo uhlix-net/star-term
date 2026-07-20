@@ -36,6 +36,7 @@ QIcon    settingsIcon(int size = 24);
 QIcon    sshIcon(int size = 24);
 QIcon    rdpIcon(int size = 24);
 QIcon    sidebarToggleIcon(int size = 24);
+QIcon    logIcon(int size = 24);
 QPixmap  downArrowPixmap(const QColor &color, int size = 10);
 
 } // namespace Icons

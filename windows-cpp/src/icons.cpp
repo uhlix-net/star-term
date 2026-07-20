@@ -337,6 +337,51 @@ QIcon Icons::sidebarToggleIcon(int size) {
 }
 
 // -----------------------------------------------------------------------
+// logIcon — document with horizontal lines + red record dot
+// -----------------------------------------------------------------------
+QIcon Icons::logIcon(int size) {
+    QPixmap pm = makePixmap(size);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(Qt::NoPen);
+
+    // Document body
+    p.setBrush(ICON_FG);
+    double fold = size * 0.24;
+    p.drawPolygon(QPolygonF({
+        QPointF(size * 0.16, size * 0.06),
+        QPointF(size * 0.76 - fold, size * 0.06),
+        QPointF(size * 0.76, size * 0.06 + fold),
+        QPointF(size * 0.76, size * 0.94),
+        QPointF(size * 0.16, size * 0.94),
+    }));
+
+    // Fold corner
+    p.setBrush(ICON_FG_MUTED);
+    p.drawPolygon(QPolygonF({
+        QPointF(size * 0.76 - fold, size * 0.06),
+        QPointF(size * 0.76,        size * 0.06 + fold),
+        QPointF(size * 0.76 - fold, size * 0.06 + fold),
+    }));
+
+    // Text lines (cleared from document)
+    p.setCompositionMode(QPainter::CompositionMode_Clear);
+    for (int i = 0; i < 4; ++i) {
+        double y = size * (0.38 + i * 0.135);
+        double w = (i == 3) ? size * 0.28 : size * 0.42;
+        p.fillRect(QRectF(size * 0.26, y, w, size * 0.07), Qt::black);
+    }
+
+    // Red record dot (top-right overlay)
+    p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    p.setBrush(ACCENT_RED);
+    double dotR = size * 0.16;
+    p.drawEllipse(QRectF(size * 0.62, size * 0.02, dotR * 2, dotR * 2));
+    p.end();
+    return QIcon(pm);
+}
+
+// -----------------------------------------------------------------------
 // downArrowPixmap
 // -----------------------------------------------------------------------
 QPixmap Icons::downArrowPixmap(const QColor &color, int size) {
