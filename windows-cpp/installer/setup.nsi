@@ -62,7 +62,7 @@ Function .onInit
   ; If already installed, ask whether to install/update or cancel
   ReadRegStr $R0 HKLM "${UNINSTKEY}" "DisplayVersion"
   StrCmp $R0 "" not_installed
-  MessageBox MB_YESNO|MB_ICONQUESTION "${DISPLAYNAME} version $R0 is already installed.$\n$\nDo you want to install/update it?" IDYES not_installed
+  MessageBox MB_YESNO|MB_ICONQUESTION "${DISPLAYNAME} version $R0 is already installed.$\n$\nInstall version ${VERSION} now?" IDYES not_installed
   Abort
   not_installed:
 FunctionEnd
