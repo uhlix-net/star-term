@@ -582,6 +582,7 @@ void MainWindow::startSession(SessionPane *pane, const QJsonObject &params) {
     pane->session = session;
 
     connect(session, &SSHSession::dataReceived, pane->terminal, &TerminalWidget::feed);
+    connect(session, &SSHSession::dataReceived, pane->cwdTracker, &CwdTracker::feedServerData);
     connect(session, &SSHSession::dataReceived, this, [this, pane](const QByteArray &data) {
         if (QFile *f = m_sessionLogs.value(pane)) {
             static QRegularExpression s_ansi(
