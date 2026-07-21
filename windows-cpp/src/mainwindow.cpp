@@ -57,9 +57,14 @@
 #include <QTimer>
 #include <QUrl>
 
-static const QString APP_VERSION = "0.5.0";
+static const QString APP_VERSION = "0.5.1";
 
-static const QString UPDATE_HISTORY = R"(Version 0.5.0
+static const QString UPDATE_HISTORY = R"(Version 0.5.1
+
+- RDP tab status bar now shows processor queue length, RAM, and page file usage
+- RDP tabs no longer disappear permanently when multi-exec mode is toggled
+
+Version 0.5.0
 
 - UI restyled to match uhlix.net site palette: deep navy backgrounds with electric cyan accent in dark mode; complementary blue-white with darker cyan in light mode
 
@@ -490,8 +495,15 @@ void MainWindow::onSizeChanged(SessionPane *pane, int cols, int rows) {
 void MainWindow::onTabChanged(int index) {
     SessionPane *pane = qobject_cast<SessionPane*>(m_tabs->widget(index));
     m_remoteBrowser->setPane(pane);
-    if (!m_multiExecAction->isChecked())
-        m_statusBar->updateStats(pane ? pane->lastStats : QJsonObject());
+    if (!m_multiExecAction->isChecked()) {
+        if (pane) {
+            m_statusBar->updateStats(pane->lastStats);
+        } else if (RdpPane *rdp = qobject_cast<RdpPane*>(m_tabs->widget(index))) {
+            m_statusBar->updateStats(rdp->lastStats);
+        } else {
+            m_statusBar->updateStats({});
+        }
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -515,6 +527,10 @@ void MainWindow::connectSavedSession(const QJsonObject &session) {
         m_tabs->setCurrentWidget(rdp);
         connect(rdp, &RdpPane::closeRequested, this, [this, rdp]() {
             closeRdpPane(rdp);
+        });
+        connect(rdp, &RdpPane::statsReady, this, [this, rdp](const QJsonObject &stats) {
+            if (!m_multiExecAction->isChecked() && rdp == m_tabs->currentWidget())
+                m_statusBar->updateStats(stats);
         });
         return;
     }

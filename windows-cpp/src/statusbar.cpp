@@ -24,6 +24,13 @@ void SystemStatusBar::updateStats(const QJsonObject &stats) {
         m_swapLabel->setText("Swap: N/A");
         return;
     }
+    if (stats.value("rdp").toBool()) {
+        m_cpuLabel->setText( QString("ProcQ: %1").arg(stats["procq"].toInt()));
+        m_loadLabel->setText("Load: N/A");
+        m_ramLabel->setText( QString("RAM: %1%").arg(stats["ram"].toDouble(), 0, 'f', 0));
+        m_swapLabel->setText(QString("PF: %1%").arg( stats["pf"].toDouble(),  0, 'f', 0));
+        return;
+    }
     m_cpuLabel->setText( QString("CPU: %1%").arg(stats["cpu"].toDouble(),  0, 'f', 0));
     m_loadLabel->setText(QString("Load: %1").arg(stats["load"].toDouble(), 0, 'f', 2));
     m_ramLabel->setText( QString("RAM: %1%").arg(stats["ram"].toDouble(),  0, 'f', 0));

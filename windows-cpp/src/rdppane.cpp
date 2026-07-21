@@ -239,6 +239,11 @@ void RdpPane::embedWindow(WId hwndId)
         runHidden("cmdkey.exe", { QString("/delete:%1").arg(m_credKey) });
         m_credKey.clear();
     }
+
+    m_statsHost = m_host;
+    m_statsUser = m_user;
+    m_statsPass = m_cachedPass;
+    startStatsPolling();
 }
 
 void RdpPane::reconnect()
@@ -321,6 +326,7 @@ void RdpPane::onProcessFinished()
     }
     m_mstscHwnd = 0;
     m_cachedPass.clear();
+    stopStatsPolling();
     m_status->setText(QString("Disconnected from %1.").arg(m_host));
     m_status->show();
 }
@@ -329,6 +335,7 @@ void RdpPane::disconnectRdp()
 {
     if (m_pollTimer) m_pollTimer->stop();
     if (m_resizeTimer) m_resizeTimer->stop();
+    stopStatsPolling();
 
     if (m_winEventHook) {
         UnhookWinEvent(reinterpret_cast<HWINEVENTHOOK>(m_winEventHook));
@@ -358,4 +365,85 @@ void RdpPane::disconnectRdp()
         if (m_process->state() != QProcess::NotRunning)
             m_process->kill();
     }
+}
+
+// ---------------------------------------------------------------------------
+// Remote stats polling via WMI (processor queue length, RAM, page file)
+// ---------------------------------------------------------------------------
+
+void RdpPane::startStatsPolling() {
+    if (m_statsTimer) return;
+    m_statsTimer = new QTimer(this);
+    connect(m_statsTimer, &QTimer::timeout, this, &RdpPane::pollStats);
+    m_statsTimer->start(2000);
+    pollStats();
+}
+
+void RdpPane::stopStatsPolling() {
+    if (m_statsTimer) { m_statsTimer->stop(); m_statsTimer->deleteLater(); m_statsTimer = nullptr; }
+    if (m_statsProcess) {
+        m_statsProcess->disconnect(this);
+        m_statsProcess->kill();
+        m_statsProcess->deleteLater();
+        m_statsProcess = nullptr;
+    }
+    lastStats = {};
+}
+
+void RdpPane::pollStats() {
+    if (m_statsProcess && m_statsProcess->state() != QProcess::NotRunning) return;
+    if (m_statsHost.isEmpty() || m_statsPass.isEmpty()) return;
+
+    QString pass = m_statsPass;
+    pass.replace("'", "''");  // escape single quotes for PowerShell string literal
+
+    QString cmd = QString(
+        "$pass = ConvertTo-SecureString '%1' -AsPlainText -Force; "
+        "$cred = New-Object PSCredential('%2', $pass); "
+        "$sys = Get-WmiObject -ComputerName '%3' -Credential $cred "
+            "-Class Win32_PerfFormattedData_PerfOS_System -ErrorAction Stop; "
+        "$os = Get-WmiObject -ComputerName '%3' -Credential $cred "
+            "-Class Win32_OperatingSystem -ErrorAction Stop; "
+        "Write-Output \"$($sys.ProcessorQueueLength) $($os.FreePhysicalMemory) "
+            "$($os.TotalVisibleMemorySize) $($os.FreeSpaceInPagingFiles) "
+            "$($os.SizeStoredInPagingFiles)\""
+    ).arg(pass, m_statsUser, m_statsHost);
+
+    QProcess *proc = new QProcess(this);
+#ifdef Q_OS_WIN
+    proc->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *a) {
+        a->flags |= CREATE_NO_WINDOW;
+    });
+#endif
+    connect(proc, &QProcess::finished, this,
+            [this, proc](int exitCode, QProcess::ExitStatus) {
+        if (m_statsProcess == proc) m_statsProcess = nullptr;
+        if (exitCode != 0) { proc->deleteLater(); return; }
+
+        QString output = proc->readAllStandardOutput().trimmed();
+        proc->deleteLater();
+
+        QStringList parts = output.split(' ', Qt::SkipEmptyParts);
+        if (parts.size() < 5) return;
+
+        bool ok;
+        int       procQ    = parts[0].toInt(&ok);       if (!ok) return;
+        long long freeMem  = parts[1].toLongLong(&ok);  if (!ok) return;
+        long long totalMem = parts[2].toLongLong(&ok);  if (!ok) return;
+        long long freePF   = parts[3].toLongLong(&ok);  if (!ok) return;
+        long long totalPF  = parts[4].toLongLong(&ok);  if (!ok) return;
+
+        double ramPct = (totalMem > 0) ? (totalMem - freeMem) * 100.0 / totalMem : 0.0;
+        double pfPct  = (totalPF  > 0) ? (totalPF  - freePF)  * 100.0 / totalPF  : 0.0;
+
+        QJsonObject stats;
+        stats["rdp"]   = true;
+        stats["procq"] = procQ;
+        stats["ram"]   = ramPct;
+        stats["pf"]    = pfPct;
+        lastStats = stats;
+        emit statsReady(stats);
+    });
+    m_statsProcess = proc;
+    proc->start("powershell.exe", {"-NonInteractive", "-NoProfile", "-Command", cmd});
 }
