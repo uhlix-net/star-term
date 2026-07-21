@@ -57,9 +57,20 @@
 #include <QTimer>
 #include <QUrl>
 
-static const QString APP_VERSION = "0.4.0";
+static const QString APP_VERSION = "0.4.1";
 
-static const QString UPDATE_HISTORY = R"(Version 0.4.0
+static const QString UPDATE_HISTORY = R"(Version 0.4.1
+
+- Session folder delete now prompts for confirmation; sessions inside deleted folder are permanently removed
+- Removed default "General" folder — no folders exist until user creates them; unfoldered sessions appear at root
+- Updates now download and launch the installer automatically instead of opening a browser
+- Installer version prompt shows both installed and new version
+- Session logs written to AppData\star_term\session_logs\ (renamed from logs\)
+- Session logs written live (flushed after each write) and ANSI escape codes stripped
+- SSH known_hosts now saves correctly (key algorithm flag fix)
+- Session logging defaults to disabled on startup
+
+Version 0.4.0
 
 - Session logging toggle in main toolbar — logs terminal output to AppData\star_term\logs\
 - Terminal color themes: 10 presets (Default, Solarized, Dracula, Monokai, Nord, One Dark, Gruvbox, Campbell, PowerShell) selectable live in Preferences → Terminal
