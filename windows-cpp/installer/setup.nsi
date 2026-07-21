@@ -2,7 +2,8 @@
 !define DISPLAYNAME "Star Term"
 !define VERSION "0.4.1"
 !define PUBLISHER "uhlix.net"
-!define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
+; Use a C++-specific key so we don't collide with the Python edition's "star_term" entry
+!define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\StarTermCpp"
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
@@ -75,6 +76,13 @@ Section "Application" SecApp
   Delete "$SMPROGRAMS\Star Term C++ Edition\Uninstall Star Term C++ Edition.lnk"
   RMDir  "$SMPROGRAMS\Star Term C++ Edition"
   Delete "$DESKTOP\Star Term C++ Edition.lnk"
+
+  ; Remove old "star_term" uninstall registry key left by earlier C++ installers.
+  ; (That key name collides with the Python edition; we now use StarTermCpp.)
+  ReadRegStr $R1 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\star_term" "InstallLocation"
+  StrCmp $R1 "$INSTDIR" 0 skip_old_key_cleanup
+    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\star_term"
+  skip_old_key_cleanup:
 
 ; --- Application binary + all runtime files (Qt, plugins, vcpkg DLLs) ---
   ; Packages everything windeployqt + vcpkg staged in build\Release.
