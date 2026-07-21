@@ -29,6 +29,7 @@ public:
 
 public slots:
     void feedInput(const QByteArray &data);
+    void feedServerData(const QByteArray &data);
 
 signals:
     void cwdChanged(const QString &path);
@@ -41,7 +42,9 @@ private:
     QString m_home;
     QString m_cwd;
     QString m_buffer;
-    QString m_escapeState;   // "", "esc", or "csi"
+    QString m_escapeState;      // "", "esc", or "csi"
+    QString m_serverEscState;   // escape state for feedServerData
+    bool    m_tabPending = false;
 };
 
 // -----------------------------------------------------------------------

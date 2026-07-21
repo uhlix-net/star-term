@@ -50,15 +50,38 @@ void CwdTracker::feedInput(const QByteArray &data) {
         if (ch == '\r' || ch == '\n') {
             processLine(m_buffer);
             m_buffer.clear();
+            m_tabPending = false;
         } else if (ch == '\x7f' || ch == '\x08') {
             if (!m_buffer.isEmpty()) m_buffer.chop(1);
         } else if (ch == '\x03' || ch == '\x15') {
             m_buffer.clear();
+            m_tabPending = false;
         } else if (ch == '\x1b') {
             m_escapeState = "esc";
+        } else if (ch == '\t') {
+            m_tabPending = true;
         } else if (ch.isPrint()) {
+            m_tabPending = false;  // user typed a char; next server data is echo, not completion
             m_buffer += ch;
         }
+    }
+}
+
+void CwdTracker::feedServerData(const QByteArray &data) {
+    if (!m_tabPending) return;
+    QString text = QString::fromUtf8(data);
+    for (QChar ch : text) {
+        if (!m_serverEscState.isEmpty()) {
+            if (m_serverEscState == "esc") {
+                m_serverEscState = (ch == '[') ? "csi" : "";
+            } else if (m_serverEscState == "csi") {
+                if (ch.isLetter() || ch == '~') m_serverEscState = "";
+            }
+            continue;
+        }
+        if (ch == '\x1b') { m_serverEscState = "esc"; continue; }
+        if (ch == '\r' || ch == '\n') { m_tabPending = false; return; }
+        if (ch.isPrint()) m_buffer += ch;
     }
 }
 
@@ -542,9 +565,14 @@ void RemoteFileBrowser::setPath(const QString &path) {
 
 void RemoteFileBrowser::refresh() {
     if (!m_sftp || !m_session || m_currentPath.isEmpty()) return;
-    SFTPWorker *w = new SFTPWorker(m_session, m_sftp, m_sessionLock, m_currentPath, this);
-    connect(w, &SFTPWorker::listed,  this, &RemoteFileBrowser::onListed);
-    connect(w, &SFTPWorker::error,   this, &RemoteFileBrowser::onError);
+    QString requestedPath = m_currentPath;
+    SFTPWorker *w = new SFTPWorker(m_session, m_sftp, m_sessionLock, requestedPath, this);
+    connect(w, &SFTPWorker::listed, this, &RemoteFileBrowser::onListed);
+    connect(w, &SFTPWorker::error,  this, [this, requestedPath](const QString &) {
+        if (requestedPath != m_currentPath) return;
+        m_listWidget->clear();
+        m_statusLabel->setText("No access");
+    });
     runWorker(w);
 }
 
