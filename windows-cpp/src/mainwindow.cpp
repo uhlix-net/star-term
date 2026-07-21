@@ -57,9 +57,14 @@
 #include <QTimer>
 #include <QUrl>
 
-static const QString APP_VERSION = "0.4.1";
+static const QString APP_VERSION = "0.4.2";
 
-static const QString UPDATE_HISTORY = R"(Version 0.4.1
+static const QString UPDATE_HISTORY = R"(Version 0.4.2
+
+- Remote files pane shows "No access" when a directory cannot be read, instead of appending the failed path
+- Remote files pane now correctly follows tab-completed cd commands
+
+Version 0.4.1
 
 - Session folder delete now prompts for confirmation; sessions inside deleted folder are permanently removed
 - Removed default "General" folder — no folders exist until user creates them; unfoldered sessions appear at root
