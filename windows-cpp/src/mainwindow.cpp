@@ -57,9 +57,13 @@
 #include <QTimer>
 #include <QUrl>
 
-static const QString APP_VERSION = "0.4.2";
+static const QString APP_VERSION = "0.5.0";
 
-static const QString UPDATE_HISTORY = R"(Version 0.4.2
+static const QString UPDATE_HISTORY = R"(Version 0.5.0
+
+- UI restyled to match uhlix.net site palette: deep navy backgrounds with electric cyan accent in dark mode; complementary blue-white with darker cyan in light mode
+
+Version 0.4.2
 
 - Remote files pane shows "No access" when a directory cannot be read, instead of appending the failed path
 - Remote files pane now correctly follows tab-completed cd commands
