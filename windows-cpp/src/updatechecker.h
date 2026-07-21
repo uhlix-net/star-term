@@ -14,8 +14,8 @@ public:
     void checkAsync();
 
 signals:
-    void updateAvailable(const QString &latestVersion, const QString &releaseUrl);
-    void checkFinished(bool updateAvailable, const QString &latestVersion, const QString &releaseUrl);
+    void updateAvailable(const QString &latestVersion, const QString &releaseUrl, const QString &downloadUrl);
+    void checkFinished(bool updateAvailable, const QString &latestVersion, const QString &releaseUrl, const QString &downloadUrl);
 
 private slots:
     void onReply(QNetworkReply *reply);

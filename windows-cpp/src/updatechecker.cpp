@@ -1,5 +1,6 @@
 #include "updatechecker.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
@@ -30,29 +31,39 @@ void UpdateChecker::checkAsync() {
 void UpdateChecker::onReply(QNetworkReply *reply) {
     reply->deleteLater();
     if (reply->error() != QNetworkReply::NoError) {
-        emit checkFinished(false, QString(), QString());
+        emit checkFinished(false, QString(), QString(), QString());
         return;
     }
 
     QJsonParseError err;
     QJsonDocument doc = QJsonDocument::fromJson(reply->readAll(), &err);
     if (err.error != QJsonParseError::NoError || !doc.isObject()) {
-        emit checkFinished(false, QString(), QString());
+        emit checkFinished(false, QString(), QString(), QString());
         return;
     }
 
     QJsonObject obj = doc.object();
     QString tagName    = obj.value("tag_name").toString();
     QString releaseUrl = obj.value("html_url").toString();
+
+    QString downloadUrl;
+    for (const auto &asset : obj.value("assets").toArray()) {
+        QString name = asset.toObject().value("name").toString();
+        if (name.endsWith(".exe", Qt::CaseInsensitive)) {
+            downloadUrl = asset.toObject().value("browser_download_url").toString();
+            break;
+        }
+    }
+
     if (tagName.isEmpty()) {
-        emit checkFinished(false, QString(), QString());
+        emit checkFinished(false, QString(), QString(), QString());
         return;
     }
 
     bool newer = cmpVersion(tagName, m_currentVersion) > 0;
     if (newer)
-        emit updateAvailable(tagName, releaseUrl);
-    emit checkFinished(newer, tagName, releaseUrl);
+        emit updateAvailable(tagName, releaseUrl, downloadUrl);
+    emit checkFinished(newer, tagName, releaseUrl, downloadUrl);
 }
 
 // Returns >0 if a is newer than b, 0 if equal, <0 if older.

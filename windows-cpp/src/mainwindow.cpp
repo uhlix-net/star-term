@@ -48,7 +48,11 @@
 #include <QPushButton>
 #include <QApplication>
 #include <QDir>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QProcess>
+#include <QProgressDialog>
 #include <QRegularExpression>
 #include <QTimer>
 #include <QUrl>
@@ -851,23 +855,44 @@ void MainWindow::showUpdatesDialog() {
     if (!m_updateChecker)
         m_updateChecker = new UpdateChecker(APP_VERSION, this);
 
+    // --- Install button (hidden until update found) ---
+    QPushButton *installBtn = new QPushButton("Download && Install");
+    installBtn->setVisible(false);
+    QString pendingDlUrl;
+
+    connect(installBtn, &QPushButton::clicked, &dlg, [this, &dlg, &pendingDlUrl]() {
+        dlg.accept();
+        downloadAndInstall(pendingDlUrl);
+    });
+
+    layout->insertWidget(layout->indexOf(statusLabel) + 1, installBtn);
+
     // --- Check button: fires a single-shot check, result shown inline ---
     connect(checkBtn, &QPushButton::clicked, &dlg,
-            [this, checkBtn, statusLabel]() {
+            [this, checkBtn, statusLabel, installBtn, &pendingDlUrl]() {
         checkBtn->setEnabled(false);
+        installBtn->setVisible(false);
         statusLabel->setText("Checking...");
         connect(m_updateChecker, &UpdateChecker::checkFinished,
-                checkBtn, [checkBtn, statusLabel]
-                (bool hasUpdate, const QString &ver, const QString &url) {
+                checkBtn, [this, checkBtn, statusLabel, installBtn, &pendingDlUrl]
+                (bool hasUpdate, const QString &ver, const QString &url, const QString &dlUrl) {
             checkBtn->setEnabled(true);
-            if (hasUpdate)
-                statusLabel->setText(
-                    QString("Version <b>%1</b> is available &mdash; "
-                            "<a href='%2'>download</a>").arg(ver, url));
-            else if (!ver.isEmpty())
+            if (hasUpdate) {
+                if (!dlUrl.isEmpty()) {
+                    pendingDlUrl = dlUrl;
+                    installBtn->setVisible(true);
+                    statusLabel->setText(
+                        QString("Version <b>%1</b> is available.").arg(ver));
+                } else {
+                    statusLabel->setText(
+                        QString("Version <b>%1</b> is available &mdash; "
+                                "<a href='%2'>download</a>").arg(ver, url));
+                }
+            } else if (!ver.isEmpty()) {
                 statusLabel->setText("You are up to date.");
-            else
+            } else {
                 statusLabel->setText("Could not reach update server. Check your network connection.");
+            }
         }, Qt::SingleShotConnection);
         m_updateChecker->checkAsync();
     });
@@ -888,17 +913,67 @@ void MainWindow::checkForUpdates() {
         m_updateChecker = new UpdateChecker(APP_VERSION, this);
 
     connect(m_updateChecker, &UpdateChecker::checkFinished,
-            this, [this](bool hasUpdate, const QString &ver, const QString &url) {
+            this, [this](bool hasUpdate, const QString &ver, const QString &url, const QString &dlUrl) {
         if (!hasUpdate) return;
         int ret = QMessageBox::question(
             this, "Update Available",
-            QString("Star Term %1 is available.\n\nWould you like to download it now?").arg(ver),
+            QString("Star Term %1 is available.\n\nWould you like to install it now?").arg(ver),
             QMessageBox::Yes | QMessageBox::No);
-        if (ret == QMessageBox::Yes)
-            QDesktopServices::openUrl(QUrl(url));
+        if (ret == QMessageBox::Yes) {
+            if (!dlUrl.isEmpty())
+                downloadAndInstall(dlUrl);
+            else
+                QDesktopServices::openUrl(QUrl(url));
+        }
     }, Qt::SingleShotConnection);
 
     m_updateChecker->checkAsync();
+}
+
+void MainWindow::downloadAndInstall(const QString &url) {
+    auto *progress = new QProgressDialog("Downloading update...", "Cancel", 0, 0, this);
+    progress->setWindowModality(Qt::WindowModal);
+    progress->setMinimumDuration(0);
+    progress->setValue(0);
+    progress->show();
+
+    auto *nam = new QNetworkAccessManager(this);
+    QNetworkRequest req;
+    req.setUrl(QUrl(url));
+    req.setRawHeader("User-Agent", "star-term-updater");
+    QNetworkReply *reply = nam->get(req);
+
+    connect(reply, &QNetworkReply::downloadProgress, progress,
+            [progress](qint64 got, qint64 total) {
+        if (total > 0) {
+            progress->setMaximum(100);
+            progress->setValue(int(got * 100 / total));
+        }
+    });
+    connect(progress, &QProgressDialog::canceled, reply, &QNetworkReply::abort);
+
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, progress, nam]() {
+        progress->close();
+        progress->deleteLater();
+        nam->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) {
+            showError("Download failed: " + reply->errorString());
+            reply->deleteLater();
+            return;
+        }
+        QString path = QDir::tempPath() + "/star_term_setup.exe";
+        QFile f(path);
+        if (!f.open(QIODevice::WriteOnly) || f.write(reply->readAll()) < 0) {
+            showError("Could not save installer to temp directory.");
+            reply->deleteLater();
+            return;
+        }
+        f.close();
+        reply->deleteLater();
+        QProcess::startDetached(path, {});
+        QApplication::quit();
+    });
 }
 
 void MainWindow::exportSessions() {

@@ -68,6 +68,7 @@ private:
     void startPaneLogging(SessionPane *pane);
     void stopPaneLogging(SessionPane *pane);
     void toggleSessionLogging(bool enabled);
+    void downloadAndInstall(const QString &url);
 
     QList<SessionPane*>  m_panes;
     SessionSidebar      *m_sidebar          = nullptr;

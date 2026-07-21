@@ -23,8 +23,7 @@
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
 
-static const QString DEFAULT_FOLDER = "General";
-static const int     FOLDER_ROLE    = Qt::UserRole + 1;
+static const int FOLDER_ROLE = Qt::UserRole + 1;
 
 // -----------------------------------------------------------------------
 // SessionEditDialog (inner)
@@ -43,7 +42,7 @@ public:
         m_folderEdit->setEditable(true);
         m_folderEdit->addItems(folders);
         m_folderEdit->setCurrentText(session.value("folder").toString());
-        m_folderEdit->lineEdit()->setPlaceholderText(DEFAULT_FOLDER);
+        m_folderEdit->lineEdit()->setPlaceholderText("(no folder)");
 
         m_typeCombo = new QComboBox;
         m_typeCombo->addItems({"SSH", "RDP"});
@@ -231,8 +230,10 @@ SessionSidebar::SessionSidebar(QWidget *parent) : QWidget(parent) {
 QStringList SessionSidebar::allFolderNames() const {
     QSet<QString> names;
     for (const auto &v : m_folders) names.insert(v.toString());
-    for (const auto &v : m_sessions) names.insert(v.toObject().value("folder").toString(DEFAULT_FOLDER));
-    names.insert(DEFAULT_FOLDER);
+    for (const auto &v : m_sessions) {
+        QString f = v.toObject().value("folder").toString();
+        if (!f.isEmpty()) names.insert(f);
+    }
     QStringList list = names.values();
     std::sort(list.begin(), list.end(), [](const QString &a, const QString &b) {
         return a.toLower() < b.toLower();
@@ -242,30 +243,45 @@ QStringList SessionSidebar::allFolderNames() const {
 
 int SessionSidebar::folderSessionCount(const QString &folderName) const {
     int count = 0;
-    for (const auto &v : m_sessions) {
-        QString f = v.toObject().value("folder").toString();
-        if (f.isEmpty()) f = DEFAULT_FOLDER;
-        if (f == folderName) ++count;
-    }
+    for (const auto &v : m_sessions)
+        if (v.toObject().value("folder").toString() == folderName) ++count;
     return count;
 }
 
 void SessionSidebar::populate() {
     m_listWidget->clear();
 
-    // Build folder->session-indices map
+    // Sessions with no folder — shown at root level
+    QList<int> rootIndices;
+    for (int i = 0; i < m_sessions.size(); ++i) {
+        if (m_sessions[i].toObject().value("folder").toString().isEmpty())
+            rootIndices.append(i);
+    }
+    std::sort(rootIndices.begin(), rootIndices.end(), [this](int a, int b) {
+        return m_sessions[a].toObject().value("name").toString().toLower() <
+               m_sessions[b].toObject().value("name").toString().toLower();
+    });
+    for (int idx : rootIndices) {
+        QJsonObject sess = m_sessions[idx].toObject();
+        QTreeWidgetItem *item = new QTreeWidgetItem({sess.value("name").toString()});
+        item->setData(0, Qt::UserRole, idx);
+        QString sessType = sess.value("type").toString("ssh");
+        item->setIcon(0, (sessType == "rdp") ? Icons::rdpIcon(16) : Icons::sshIcon(16));
+        m_listWidget->addTopLevelItem(item);
+    }
+
+    // Build folder->session map (named folders only)
     QMap<QString, QList<int>> folderMap;
     for (int i = 0; i < m_sessions.size(); ++i) {
         QString folder = m_sessions[i].toObject().value("folder").toString();
-        if (folder.isEmpty()) folder = DEFAULT_FOLDER;
-        folderMap[folder].append(i);
+        if (!folder.isEmpty())
+            folderMap[folder].append(i);
     }
 
-    // All folders: from sessions + explicit folders + DEFAULT
+    // All named folders: from sessions + explicitly created folders
     QSet<QString> allFolders;
     for (const QString &f : folderMap.keys()) allFolders.insert(f);
     for (const auto &v : m_folders) allFolders.insert(v.toString());
-    allFolders.insert(DEFAULT_FOLDER);
 
     QStringList sortedFolders = allFolders.values();
     std::sort(sortedFolders.begin(), sortedFolders.end(), [](const QString &a, const QString &b) {
@@ -341,7 +357,7 @@ void SessionSidebar::onRemove() {
     }
 
     QString folderName = item->data(0, FOLDER_ROLE).toString();
-    if (!folderName.isEmpty() && folderName != DEFAULT_FOLDER)
+    if (!folderName.isEmpty())
         onRemoveFolder(folderName);
 }
 
@@ -359,7 +375,6 @@ void SessionSidebar::onContextMenu(const QPoint &pos) {
     if (idx >= 0) {
         m_listWidget->setCurrentItem(item);
         QString folder = m_sessions[idx].toObject().value("folder").toString();
-        if (folder.isEmpty()) folder = DEFAULT_FOLDER;
 
         QMenu menu(this);
         QAction *newSess = menu.addAction("New Session...");
@@ -378,7 +393,7 @@ void SessionSidebar::onContextMenu(const QPoint &pos) {
     QAction *newSess        = menu.addAction("New Session...");
     QAction *newFolder      = menu.addAction("New Folder...");
     QAction *renameFolder   = !folderName.isEmpty() ? menu.addAction("Rename Folder") : nullptr;
-    QAction *removeFolder   = (!folderName.isEmpty() && folderName != DEFAULT_FOLDER)
+    QAction *removeFolder = !folderName.isEmpty()
         ? menu.addAction("Remove Folder") : nullptr;
 
     QAction *chosen = menu.exec(m_listWidget->mapToGlobal(pos));
@@ -412,10 +427,8 @@ void SessionSidebar::onRenameFolder(const QString &folderName) {
     // Update sessions
     for (int i = 0; i < m_sessions.size(); ++i) {
         QJsonObject s = m_sessions[i].toObject();
-        QString f = s.value("folder").toString();
-        if (f.isEmpty()) f = DEFAULT_FOLDER;
-        if (f == folderName) {
-            s["folder"] = (newName == DEFAULT_FOLDER) ? "" : newName;
+        if (s.value("folder").toString() == folderName) {
+            s["folder"] = newName;
             m_sessions[i] = s;
         }
     }
@@ -424,33 +437,28 @@ void SessionSidebar::onRenameFolder(const QString &folderName) {
     // Update folders list
     for (int i = 0; i < m_folders.size(); ++i)
         if (m_folders[i].toString() == folderName) { m_folders.removeAt(i); break; }
-    if (newName != DEFAULT_FOLDER) {
-        bool exists = false;
-        for (const auto &v : m_folders) if (v.toString() == newName) { exists = true; break; }
-        if (!exists) m_folders.append(newName);
-    }
+    bool exists = false;
+    for (const auto &v : m_folders) if (v.toString() == newName) { exists = true; break; }
+    if (!exists) m_folders.append(newName);
     saveFolders(m_folders);
     populate();
 }
 
 void SessionSidebar::onRemoveFolder(const QString &folderName) {
     int count = folderSessionCount(folderName);
-    if (count > 0) {
-        int answer = QMessageBox::question(
-            this, "Remove Folder",
-            QString("Folder \"%1\" contains %2 session(s). They will be moved to \"%3\". Continue?")
-                .arg(folderName).arg(count).arg(DEFAULT_FOLDER),
-            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-        if (answer != QMessageBox::Yes) return;
+    QString msg = (count > 0)
+        ? QString("Remove folder \"%1\" and permanently delete its %2 session(s)?")
+              .arg(folderName).arg(count)
+        : QString("Remove folder \"%1\"?").arg(folderName);
+    int answer = QMessageBox::question(
+        this, "Remove Folder", msg,
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer != QMessageBox::Yes) return;
 
-        for (int i = 0; i < m_sessions.size(); ++i) {
-            QJsonObject s = m_sessions[i].toObject();
-            QString f = s.value("folder").toString();
-            if (f.isEmpty()) f = DEFAULT_FOLDER;
-            if (f == folderName) {
-                s["folder"] = "";
-                m_sessions[i] = s;
-            }
+    if (count > 0) {
+        for (int i = m_sessions.size() - 1; i >= 0; --i) {
+            if (m_sessions[i].toObject().value("folder").toString() == folderName)
+                m_sessions.removeAt(i);
         }
         saveSessions(m_sessions);
     }
@@ -463,10 +471,8 @@ void SessionSidebar::onRemoveFolder(const QString &folderName) {
 
 void SessionSidebar::onSessionDropped(int sessionIdx, const QString &targetFolder) {
     QJsonObject s = m_sessions[sessionIdx].toObject();
-    QString curFolder = s.value("folder").toString();
-    if (curFolder.isEmpty()) curFolder = DEFAULT_FOLDER;
-    if (targetFolder == curFolder) return;
-    s["folder"] = (targetFolder == DEFAULT_FOLDER) ? "" : targetFolder;
+    if (targetFolder == s.value("folder").toString()) return;
+    s["folder"] = targetFolder;
     m_sessions[sessionIdx] = s;
     saveSessions(m_sessions);
     populate();
