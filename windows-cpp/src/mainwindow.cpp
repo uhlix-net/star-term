@@ -416,8 +416,11 @@ void MainWindow::resizeForMultiExec() {
 void MainWindow::populateMultiExecGrid() {
     while (m_multiexecLayout->count())
         m_multiexecLayout->takeAt(0);
-    while (m_tabs->count())
-        m_tabs->removeTab(0);
+    // Remove only SSH session tabs; RDP tabs stay in m_tabs so they reappear on exit
+    for (int i = m_tabs->count() - 1; i >= 0; --i) {
+        if (qobject_cast<SessionPane*>(m_tabs->widget(i)))
+            m_tabs->removeTab(i);
+    }
 
     for (int i = 0; i < m_multiexecLayout->rowCount(); ++i)
         m_multiexecLayout->setRowStretch(i, 0);
