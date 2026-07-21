@@ -1,5 +1,6 @@
 #include "updatechecker.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
@@ -30,14 +31,14 @@ void UpdateChecker::checkAsync() {
 void UpdateChecker::onReply(QNetworkReply *reply) {
     reply->deleteLater();
     if (reply->error() != QNetworkReply::NoError) {
-        emit checkFinished(false, QString(), QString());
+        emit checkFinished(false, QString(), QString(), QString());
         return;
     }
 
     QJsonParseError err;
     QJsonDocument doc = QJsonDocument::fromJson(reply->readAll(), &err);
     if (err.error != QJsonParseError::NoError || !doc.isObject()) {
-        emit checkFinished(false, QString(), QString());
+        emit checkFinished(false, QString(), QString(), QString());
         return;
     }
 

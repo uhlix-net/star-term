@@ -938,10 +938,9 @@ void MainWindow::downloadAndInstall(const QString &url) {
     progress->show();
 
     auto *nam = new QNetworkAccessManager(this);
-    QNetworkRequest req(QUrl(url));
+    QNetworkRequest req;
+    req.setUrl(QUrl(url));
     req.setRawHeader("User-Agent", "star-term-updater");
-    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                     QNetworkRequest::NoLessSafeRedirectPolicy);
     QNetworkReply *reply = nam->get(req);
 
     connect(reply, &QNetworkReply::downloadProgress, progress,
