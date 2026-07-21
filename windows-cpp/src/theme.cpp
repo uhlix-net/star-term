@@ -9,44 +9,47 @@
 // -----------------------------------------------------------------------
 // Color dictionaries (mirrors Python DARK / LIGHT dicts)
 // -----------------------------------------------------------------------
+// Palette derived from uhlix.net/product/star-term/ site design.
+// Dark: deep navy bg + electric cyan accent (#00d9ff from --accent).
+// Light: blue-white bg + darker cyan for legible contrast on white.
 static ThemeColors DARK_COLORS = {
-    "#1e1e1e",  // BG
-    "#252526",  // PANEL_BG
-    "#2d2d2d",  // ELEVATED_BG
-    "#3c3c3c",  // BORDER
-    "#cccccc",  // TEXT
-    "#8a8a8a",  // MUTED_TEXT
-    "#0e639c",  // ACCENT
-    "#1177bb",  // ACCENT_HOVER
-    "#094771",  // SELECTION
-    "#3c3c3c",  // INPUT_BG
-    "#3a3d41",  // BUTTON_BG
-    "#45494e",  // BUTTON_HOVER_BG
-    "#5a5a5a",  // BUTTON_HOVER_BORDER
-    "#2d2d2d",  // DISABLED_BG
-    "#2a2d2e",  // ITEM_HOVER_BG
-    "#5a5a5a",  // SCROLLBAR_HANDLE
-    "#6e6e6e",  // SCROLLBAR_HANDLE_HOVER
+    "#0a0e17",  // BG            -- site --bg
+    "#0d1220",  // PANEL_BG      -- site --bg-alt
+    "#111828",  // ELEVATED_BG   -- menus / toolbars
+    "#1e2a40",  // BORDER        -- site surface-border approximated opaque
+    "#e7edf6",  // TEXT          -- site --text
+    "#93a1b8",  // MUTED_TEXT    -- site --text-muted
+    "#00d9ff",  // ACCENT        -- site --accent (electric cyan)
+    "#33e4ff",  // ACCENT_HOVER  -- lighter cyan for focus rings / tab underline
+    "#0a3040",  // SELECTION     -- dark teal list/text selection
+    "#0d1220",  // INPUT_BG
+    "#141e30",  // BUTTON_BG
+    "#1a2840",  // BUTTON_HOVER_BG
+    "#00d9ff",  // BUTTON_HOVER_BORDER
+    "#0c1018",  // DISABLED_BG
+    "#101827",  // ITEM_HOVER_BG
+    "#1c2e4a",  // SCROLLBAR_HANDLE
+    "#2a4060",  // SCROLLBAR_HANDLE_HOVER
 };
 
 static ThemeColors LIGHT_COLORS = {
-    "#f3f3f3",  // BG
+    "#f0f4fa",  // BG            -- light blue-white complement of site navy
     "#ffffff",  // PANEL_BG
-    "#e7e7e7",  // ELEVATED_BG
-    "#cccccc",  // BORDER
-    "#1e1e1e",  // TEXT
-    "#6e6e6e",  // MUTED_TEXT
-    "#0e639c",  // ACCENT
-    "#1177bb",  // ACCENT_HOVER
-    "#cce4f7",  // SELECTION
+    "#e4ecf7",  // ELEVATED_BG
+    "#beccdf",  // BORDER
+    "#0d1220",  // TEXT          -- site bg color repurposed as dark text
+    "#4a5a78",  // MUTED_TEXT
+    "#007a99",  // ACCENT        -- cyan darkened for 5:1 contrast on white
+    "#005f7a",  // ACCENT_HOVER
+    "#c2e0f0",  // SELECTION     -- light cyan
     "#ffffff",  // INPUT_BG
-    "#e1e1e1",  // BUTTON_BG
-    "#d6d6d6",  // BUTTON_HOVER_BG
-    "#adadad",  // BUTTON_HOVER_BORDER
-    "#ececec",  // DISABLED_BG
-    "#e5f1fb",  // ITEM_HOVER_BG
-    "#c1c1c1",  // SCROLLBAR_HANDLE
-    "#a8a8a8",  // SCROLLBAR_HANDLE_HOVER
+    "#dde6f5",  // BUTTON_BG
+    "#c8d8ef",  // BUTTON_HOVER_BG
+    "#007a99",  // BUTTON_HOVER_BORDER
+    "#eaeff8",  // DISABLED_BG
+    "#d8eaf8",  // ITEM_HOVER_BG
+    "#b0c4dc",  // SCROLLBAR_HANDLE
+    "#007a99",  // SCROLLBAR_HANDLE_HOVER
 };
 
 // -----------------------------------------------------------------------
