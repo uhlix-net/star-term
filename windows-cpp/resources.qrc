@@ -1,5 +1,7 @@
 <RCC>
     <qresource prefix="/">
         <file alias="icon.png">assets/star-term-icon-512.png</file>
+        <file alias="logo-light.png">assets/uhlix-net-logo.png</file>
+        <file alias="logo-dark.png">assets/uhlix-net-logo-inverted-transparent.png</file>
     </qresource>
 </RCC>
