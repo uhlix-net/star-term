@@ -802,8 +802,15 @@ void MainWindow::showAboutDialog() {
     QDialog dlg(this);
     dlg.setWindowTitle("About Star Term");
 
+    bool isDark = loadSettings().value("theme").toString("dark") != "light";
+    QString logoResource = isDark ? ":/logo-dark.png" : ":/logo-light.png";
+    QPixmap logoPm(logoResource);
+    QLabel *logoLabel = new QLabel;
+    logoLabel->setPixmap(logoPm.scaled(280, 80, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    logoLabel->setAlignment(Qt::AlignCenter);
+
     QLabel *iconLabel = new QLabel;
-    iconLabel->setPixmap(Icons::appIcon().pixmap(96, 96));
+    iconLabel->setPixmap(Icons::appIcon().pixmap(64, 64));
     iconLabel->setAlignment(Qt::AlignCenter);
 
     QLabel *versionLabel = new QLabel(
@@ -823,6 +830,8 @@ void MainWindow::showAboutDialog() {
     connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
 
     QVBoxLayout *layout = new QVBoxLayout(&dlg);
+    layout->setSpacing(12);
+    layout->addWidget(logoLabel);
     layout->addWidget(iconLabel);
     layout->addWidget(versionLabel);
     layout->addWidget(infoLabel);
