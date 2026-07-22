@@ -400,13 +400,16 @@ void RdpPane::pollStats() {
     QString cmd = QString(
         "$pass = ConvertTo-SecureString '%1' -AsPlainText -Force; "
         "$cred = New-Object PSCredential('%2', $pass); "
+        "$cpu = Get-WmiObject -ComputerName '%3' -Credential $cred "
+            "-Class Win32_PerfFormattedData_PerfOS_Processor "
+            "-Filter \"Name='_Total'\" -ErrorAction Stop; "
         "$sys = Get-WmiObject -ComputerName '%3' -Credential $cred "
             "-Class Win32_PerfFormattedData_PerfOS_System -ErrorAction Stop; "
         "$os = Get-WmiObject -ComputerName '%3' -Credential $cred "
             "-Class Win32_OperatingSystem -ErrorAction Stop; "
-        "Write-Output \"$($sys.ProcessorQueueLength) $($os.FreePhysicalMemory) "
-            "$($os.TotalVisibleMemorySize) $($os.FreeSpaceInPagingFiles) "
-            "$($os.SizeStoredInPagingFiles)\""
+        "Write-Output \"$($cpu.PercentProcessorTime) $($sys.ProcessorQueueLength) "
+            "$($os.FreePhysicalMemory) $($os.TotalVisibleMemorySize) "
+            "$($os.FreeSpaceInPagingFiles) $($os.SizeStoredInPagingFiles)\""
     ).arg(pass, m_statsUser, m_statsHost);
 
     QProcess *proc = new QProcess(this);
@@ -424,20 +427,22 @@ void RdpPane::pollStats() {
         proc->deleteLater();
 
         QStringList parts = output.split(' ', Qt::SkipEmptyParts);
-        if (parts.size() < 5) return;
+        if (parts.size() < 6) return;
 
         bool ok;
-        int       procQ    = parts[0].toInt(&ok);       if (!ok) return;
-        long long freeMem  = parts[1].toLongLong(&ok);  if (!ok) return;
-        long long totalMem = parts[2].toLongLong(&ok);  if (!ok) return;
-        long long freePF   = parts[3].toLongLong(&ok);  if (!ok) return;
-        long long totalPF  = parts[4].toLongLong(&ok);  if (!ok) return;
+        int       cpuPct   = parts[0].toInt(&ok);       if (!ok) return;
+        int       procQ    = parts[1].toInt(&ok);        if (!ok) return;
+        long long freeMem  = parts[2].toLongLong(&ok);  if (!ok) return;
+        long long totalMem = parts[3].toLongLong(&ok);  if (!ok) return;
+        long long freePF   = parts[4].toLongLong(&ok);  if (!ok) return;
+        long long totalPF  = parts[5].toLongLong(&ok);  if (!ok) return;
 
         double ramPct = (totalMem > 0) ? (totalMem - freeMem) * 100.0 / totalMem : 0.0;
         double pfPct  = (totalPF  > 0) ? (totalPF  - freePF)  * 100.0 / totalPF  : 0.0;
 
         QJsonObject stats;
         stats["rdp"]   = true;
+        stats["cpu"]   = cpuPct;
         stats["procq"] = procQ;
         stats["ram"]   = ramPct;
         stats["pf"]    = pfPct;
