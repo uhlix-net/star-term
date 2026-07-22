@@ -3,6 +3,10 @@
 #include <QLabel>
 
 SystemStatusBar::SystemStatusBar(QWidget *parent) : QStatusBar(parent) {
+    m_licenseLabel = new QLabel;
+    m_licenseLabel->setObjectName("mutedNote");
+    addWidget(m_licenseLabel);
+
     m_cpuLabel  = new QLabel;
     m_loadLabel = new QLabel;
     m_ramLabel  = new QLabel;
@@ -14,6 +18,21 @@ SystemStatusBar::SystemStatusBar(QWidget *parent) : QStatusBar(parent) {
     }
 
     updateStats({});
+}
+
+void SystemStatusBar::setLicenseStatus(const LicenseStatus &status) {
+    if (status.licensed) {
+        QString licensee = status.licenseInfo.value("licensee").toString();
+        m_licenseLabel->setText(licensee.isEmpty()
+            ? "Licensed"
+            : QString("Licensed to: %1").arg(licensee));
+    } else {
+        m_licenseLabel->setText(status.trialExpired
+            ? "Trial expired"
+            : QString("Trial: %1 day%2 remaining")
+                .arg(status.trialDaysRemaining)
+                .arg(status.trialDaysRemaining == 1 ? "" : "s"));
+    }
 }
 
 void SystemStatusBar::updateStats(const QJsonObject &stats) {

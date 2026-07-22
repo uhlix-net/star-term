@@ -4,6 +4,7 @@
 #include "connectiondialog.h"
 #include "icons.h"
 #include "licensedialog.h"
+#include "licensing.h"
 #include "macrospanel.h"
 #include "preferencesdialog.h"
 #include "remotebrowser.h"
@@ -174,6 +175,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     // --- Status bar ---
     m_statusBar = new SystemStatusBar(this);
     setStatusBar(m_statusBar);
+    m_statusBar->setLicenseStatus(getLicenseStatus());
 
     // --- Actions ---
     m_connectAction = new QAction("Connect...", this);
