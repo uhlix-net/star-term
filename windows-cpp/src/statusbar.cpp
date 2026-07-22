@@ -3,6 +3,10 @@
 #include <QLabel>
 
 SystemStatusBar::SystemStatusBar(QWidget *parent) : QStatusBar(parent) {
+    m_licenseLabel = new QLabel;
+    m_licenseLabel->setObjectName("mutedNote");
+    addWidget(m_licenseLabel);
+
     m_cpuLabel  = new QLabel;
     m_loadLabel = new QLabel;
     m_ramLabel  = new QLabel;
@@ -16,6 +20,21 @@ SystemStatusBar::SystemStatusBar(QWidget *parent) : QStatusBar(parent) {
     updateStats({});
 }
 
+void SystemStatusBar::setLicenseStatus(const LicenseStatus &status) {
+    if (status.licensed) {
+        QString licensee = status.licenseInfo.value("licensee").toString();
+        m_licenseLabel->setText(licensee.isEmpty()
+            ? "Licensed"
+            : QString("Licensed to: %1").arg(licensee));
+    } else {
+        m_licenseLabel->setText(status.trialExpired
+            ? "Trial expired"
+            : QString("Trial: %1 day%2 remaining")
+                .arg(status.trialDaysRemaining)
+                .arg(status.trialDaysRemaining == 1 ? "" : "s"));
+    }
+}
+
 void SystemStatusBar::updateStats(const QJsonObject &stats) {
     if (stats.isEmpty()) {
         m_cpuLabel->setText("CPU: N/A");
@@ -25,8 +44,8 @@ void SystemStatusBar::updateStats(const QJsonObject &stats) {
         return;
     }
     if (stats.value("rdp").toBool()) {
-        m_cpuLabel->setText( QString("ProcQ: %1").arg(stats["procq"].toInt()));
-        m_loadLabel->setText("Load: N/A");
+        m_cpuLabel->setText( QString("CPU: %1%").arg(stats["cpu"].toInt()));
+        m_loadLabel->setText(QString("ProcQ: %1").arg(stats["procq"].toInt()));
         m_ramLabel->setText( QString("RAM: %1%").arg(stats["ram"].toDouble(), 0, 'f', 0));
         m_swapLabel->setText(QString("PF: %1%").arg( stats["pf"].toDouble(),  0, 'f', 0));
         return;
