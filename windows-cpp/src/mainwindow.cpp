@@ -525,16 +525,35 @@ void MainWindow::onTabChanged(int index) {
 // -----------------------------------------------------------------------
 void MainWindow::openConnectionDialog() {
     ConnectionDialog dlg(this);
-    if (dlg.exec()) {
-        QJsonObject params = dlg.getConnectionParams();
-        QString name = QString("%1@%2").arg(
-            params["username"].toString(), params["host"].toString());
-        connectSession(params, name);
+    if (!dlg.exec()) return;
+
+    QJsonObject params = dlg.getConnectionParams();
+    QString name = QString("%1@%2").arg(
+        params["username"].toString(), params["host"].toString());
+
+    if (params.value("type").toString() == "rdp") {
+        params["name"] = name;
+        connectSavedSession(params);
+        return;
     }
+
+    // The dialog no longer collects a password, so prompt for one here — the
+    // same flow a saved session uses.  A private key supplies its own passphrase.
+    if (params["key_path"].toString().isEmpty()) {
+        bool ok = false;
+        QString password = QInputDialog::getText(
+            this, "Password",
+            QString("Password for %1:").arg(name),
+            QLineEdit::Password, "", &ok);
+        if (!ok) return;
+        params["password"] = password;
+    }
+
+    connectSession(params, name);
 }
 
 void MainWindow::connectSavedSession(const QJsonObject &session) {
-    // RDP sessions open in an embedded tab using Win32 window embedding (mstsc.exe reparented).
+    // RDP sessions open in an embedded tab hosting the Remote Desktop ActiveX control.
     if (session.value("type").toString("ssh") == "rdp") {
         RdpPane *rdp = new RdpPane(session, this);
         m_tabs->addTab(rdp, rdp->name);
