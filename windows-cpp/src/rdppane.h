@@ -1,12 +1,19 @@
 #pragma once
 #include <QJsonObject>
-#include <QProcess>
-#include <QSet>
 #include <QWidget>
 
+class QAxObject;
+class QAxWidget;
 class QLabel;
+class QProcess;
 class QTimer;
+class QVBoxLayout;
 
+// Embedded RDP session hosted via the Microsoft Terminal Services ActiveX
+// control (MsRdpClient, mstscax.dll) inside an ActiveQt QAxWidget.  The control
+// is a real child widget, so no HWND reparenting, WinEvent hooks or cmdkey
+// credential staging is needed — credentials go straight into the control and
+// the session resizes in place via UpdateSessionDisplaySettings.
 class RdpPane : public QWidget {
     Q_OBJECT
 public:
@@ -17,8 +24,6 @@ public:
     ~RdpPane();
     void disconnectRdp();
     void reconnect();
-    // Called by the WinEvent hook callback — must be public.
-    void embedWindow(WId hwnd);
 
 signals:
     void closeRequested();
@@ -27,33 +32,46 @@ signals:
 protected:
     void showEvent(QShowEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    // Qt consumes Tab for focus navigation before it can reach the control;
+    // refuse the navigation so Tab is delivered to the remote session.
+    bool focusNextPrevChild(bool next) override;
 
 private slots:
     void connectToHost();
-    void pollForWindow();
-    void onProcessFinished();
+    void onAxConnected();
+    void onAxLoginComplete();
+    void onAxDisconnected(int discReason);
+    void onAxLogonError(int lError);
+    void onAxFatalError(int errorCode);
+    void applyPendingResize();
     void pollStats();
 
 private:
-    void startStatsPolling();
-    void stopStatsPolling();
+    bool        createControl();
+    void        destroyControl();
+    QAxObject  *advancedSettings();
+    QSize       sessionPixelSize() const;
+    QString     disconnectText(int discReason);
+    bool        promptForCredentials();
+    void        showStatus(const QString &text);
+    void        startStatsPolling();
+    void        stopStatsPolling();
 
-    QLabel         *m_status          = nullptr;
-    QTimer         *m_pollTimer       = nullptr;
-    QTimer         *m_resizeTimer     = nullptr;
-    QTimer         *m_statsTimer      = nullptr;
-    QProcess       *m_process         = nullptr;
-    QProcess       *m_statsProcess    = nullptr;
-    QString         m_host;
-    QString         m_user;
-    int             m_port            = 3389;
-    QString         m_credKey;
-    QString         m_cachedPass;
-    QString         m_statsHost;
-    QString         m_statsUser;
-    QString         m_statsPass;
-    WId             m_mstscHwnd       = 0;
-    quintptr        m_winEventHook    = 0;
-    QSet<quintptr>  m_existingWindows;
-    bool            m_initialized     = false;
+    QAxWidget   *m_ax            = nullptr;
+    QAxObject   *m_advanced      = nullptr;   // parented to m_ax
+    QLabel      *m_status        = nullptr;
+    QVBoxLayout *m_layout        = nullptr;
+    QTimer      *m_resizeTimer   = nullptr;
+    QTimer      *m_statsTimer    = nullptr;
+    QProcess    *m_statsProcess  = nullptr;
+    QString      m_host;
+    QString      m_user;
+    QString      m_domain;
+    int          m_port          = 3389;
+    QString      m_cachedPass;
+    QString      m_statsHost;
+    QString      m_statsUser;
+    QString      m_statsPass;
+    bool         m_initialized   = false;
+    bool         m_userClosing   = false;
 };

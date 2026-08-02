@@ -375,9 +375,8 @@ void MainWindow::closePane(SessionPane *pane) {
 }
 
 void MainWindow::closeRdpPane(RdpPane *pane) {
-    // Un-parent the mstsc window BEFORE removeTab triggers Qt's native window
-    // hierarchy update in Qt6Gui.dll — otherwise Qt walks our HWND children,
-    // finds the foreign mstsc HWND, and crashes with an access violation.
+    // Tear the RDP session and its ActiveX control down before removeTab so the
+    // COM object is released while the pane is still in a valid widget tree.
     pane->disconnectRdp();
     int idx = m_tabs->indexOf(pane);
     if (idx >= 0) m_tabs->removeTab(idx);

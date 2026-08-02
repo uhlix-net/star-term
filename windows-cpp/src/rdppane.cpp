@@ -1,12 +1,15 @@
 #include "rdppane.h"
 #include "config.h"
+#include "debug.h"
 
+#include <QAxObject>
+#include <QAxWidget>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
-#include <QHash>
 #include <QLabel>
 #include <QLineEdit>
+#include <QProcess>
 #include <QResizeEvent>
 #include <QShowEvent>
 #include <QTimer>
@@ -17,74 +20,28 @@
 #endif
 
 // ---------------------------------------------------------------------------
-// WinEvent hook — fires in our UI thread (WINEVENT_OUTOFCONTEXT) the instant
-// mstsc calls ShowWindow on TscShellContainerClass.  We hide the window
-// immediately so it is never composited as a standalone frame before embedding.
-// Keyed by mstsc PID so multiple concurrent RDP tabs don't interfere.
+// The RDP ActiveX control ships with Windows in mstscax.dll.  Each Windows
+// release registers a new versioned coclass; we bind to the newest one present
+// so we get the newest feature set (RemoteFX, live display resize, ...) and
+// fall back down the chain on older systems.
+//
+// The "NotSafeForScripting" variants are required: the script-safe coclasses
+// refuse to accept a password through ClearTextPassword.
 // ---------------------------------------------------------------------------
+static const char *RDP_CONTROL_PROGIDS[] = {
+    "MsRdpClient11NotSafeForScripting",
+    "MsRdpClient10NotSafeForScripting",
+    "MsRdpClient9NotSafeForScripting",
+    "MsRdpClient8NotSafeForScripting",
+    "MsRdpClient7NotSafeForScripting",
+    "MsRdpClient6NotSafeForScripting",
+    "MsRdpClient5NotSafeForScripting",
+    "MsTscAxNotSafeForScripting",
+};
 
-static QHash<DWORD, RdpPane*> s_paneByPid;
-
-static void CALLBACK rdpWinEventProc(
-    HWINEVENTHOOK, DWORD, HWND hwnd,
-    LONG idObject, LONG, DWORD, DWORD)
-{
-    if (idObject != OBJID_WINDOW) return;
-    WCHAR cls[256] = {};
-    GetClassNameW(hwnd, cls, 256);
-    if (_wcsicmp(cls, L"TscShellContainerClass") != 0) return;
-    // The hook fires for both the early hidden placeholder and the real session
-    // window.  IsWindowVisible distinguishes them — the placeholder stays hidden
-    // until the session is established; the real window is shown immediately.
-    if (!IsWindowVisible(hwnd)) return;
-    DWORD pid = 0;
-    GetWindowThreadProcessId(hwnd, &pid);
-    RdpPane *pane = s_paneByPid.value(pid, nullptr);
-    if (pane) pane->embedWindow(reinterpret_cast<WId>(hwnd));
-}
-
-// ---------------------------------------------------------------------------
-// EnumWindows fallback — used only when the WinEvent hook hasn't fired
-// (e.g. message delivery lag or hook registration edge cases).
-// ---------------------------------------------------------------------------
-
-struct RdpEnumData { const QSet<quintptr> *exclude; HWND found; };
-
-static BOOL CALLBACK findRdpSession(HWND hwnd, LPARAM lp)
-{
-    auto *d = reinterpret_cast<RdpEnumData *>(lp);
-    if (d->exclude->contains(reinterpret_cast<quintptr>(hwnd))) return TRUE;
-    if (!IsWindowVisible(hwnd)) return TRUE;
-    WCHAR cls[256] = {};
-    GetClassNameW(hwnd, cls, 256);
-    if (_wcsicmp(cls, L"TscShellContainerClass") == 0) { d->found = hwnd; return FALSE; }
-    return TRUE;
-}
-
-static BOOL CALLBACK snapshotRdpSessions(HWND hwnd, LPARAM lp)
-{
-    auto *s = reinterpret_cast<QSet<quintptr> *>(lp);
-    WCHAR cls[256] = {};
-    GetClassNameW(hwnd, cls, 256);
-    if (_wcsicmp(cls, L"TscShellContainerClass") == 0)
-        s->insert(reinterpret_cast<quintptr>(hwnd));
-    return TRUE;
-}
-
-// ---------------------------------------------------------------------------
-// Run a console utility without flashing a console window.
-// ---------------------------------------------------------------------------
-static void runHidden(const QString &program, const QStringList &args)
-{
-    QProcess proc;
-#ifdef Q_OS_WIN
-    proc.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *a) {
-        a->flags |= CREATE_NO_WINDOW;
-    });
-#endif
-    proc.start(program, args);
-    proc.waitForFinished(5000);
-}
+// Minimum remote desktop geometry the control will accept.
+static const int MIN_SESSION_W = 640;
+static const int MIN_SESSION_H = 480;
 
 // ---------------------------------------------------------------------------
 
@@ -96,14 +53,26 @@ RdpPane::RdpPane(const QJsonObject &session, QWidget *parent)
     m_port = session.value("port").toInt(3389);
     m_user = session.value("username").toString();
 
-    setAttribute(Qt::WA_NativeWindow);
+    // "DOMAIN\user" is split out; the control wants the domain separately.
+    int sep = m_user.indexOf('\\');
+    if (sep > 0) {
+        m_domain = m_user.left(sep);
+        m_user   = m_user.mid(sep + 1);
+    }
 
     m_status = new QLabel(QString("Connecting to %1...").arg(m_host));
     m_status->setAlignment(Qt::AlignCenter);
 
-    auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(m_status);
+    m_layout = new QVBoxLayout(this);
+    m_layout->setContentsMargins(0, 0, 0, 0);
+    m_layout->addWidget(m_status);
+}
+
+RdpPane::~RdpPane()
+{
+    m_userClosing = true;
+    stopStatsPolling();
+    destroyControl();
 }
 
 void RdpPane::showEvent(QShowEvent *event)
@@ -115,256 +84,303 @@ void RdpPane::showEvent(QShowEvent *event)
     }
 }
 
-void RdpPane::connectToHost()
+void RdpPane::showStatus(const QString &text)
 {
-    if (m_pollTimer) { m_pollTimer->deleteLater(); m_pollTimer = nullptr; }
-    if (m_process)   { m_process->deleteLater();   m_process   = nullptr; }
+    m_status->setText(text);
+    m_status->show();
+}
 
-    if (m_cachedPass.isEmpty()) {
-        QDialog credDlg;
-        credDlg.setWindowTitle(QString("Connect to %1").arg(m_host));
-        auto *form = new QFormLayout(&credDlg);
+// ---------------------------------------------------------------------------
+// Credentials
+// ---------------------------------------------------------------------------
+bool RdpPane::promptForCredentials()
+{
+    QDialog credDlg(this);
+    credDlg.setWindowTitle(QString("Connect to %1").arg(m_host));
+    auto *form = new QFormLayout(&credDlg);
 
-        auto *userEdit = new QLineEdit(m_user, &credDlg);
-        auto *passEdit = new QLineEdit(&credDlg);
-        passEdit->setEchoMode(QLineEdit::Password);
-        form->addRow("Username:", userEdit);
-        form->addRow("Password:", passEdit);
+    QString shownUser = m_domain.isEmpty() ? m_user
+                                           : QString("%1\\%2").arg(m_domain, m_user);
+    auto *userEdit = new QLineEdit(shownUser, &credDlg);
+    auto *passEdit = new QLineEdit(&credDlg);
+    passEdit->setEchoMode(QLineEdit::Password);
+    form->addRow("Username:", userEdit);
+    form->addRow("Password:", passEdit);
 
-        auto *btns = new QDialogButtonBox(
-            QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &credDlg);
-        form->addRow(btns);
-        connect(btns, &QDialogButtonBox::accepted, &credDlg, &QDialog::accept);
-        connect(btns, &QDialogButtonBox::rejected, &credDlg, &QDialog::reject);
+    auto *btns = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &credDlg);
+    form->addRow(btns);
+    connect(btns, &QDialogButtonBox::accepted, &credDlg, &QDialog::accept);
+    connect(btns, &QDialogButtonBox::rejected, &credDlg, &QDialog::reject);
 
-        if (credDlg.exec() != QDialog::Accepted) {
-            m_status->setText("Connection cancelled.");
-            return;
+    if (credDlg.exec() != QDialog::Accepted) return false;
+
+    QString entered = userEdit->text();
+    int sep = entered.indexOf('\\');
+    if (sep > 0) {
+        m_domain = entered.left(sep);
+        m_user   = entered.mid(sep + 1);
+    } else {
+        m_domain.clear();
+        m_user = entered;
+    }
+    m_cachedPass = passEdit->text();
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Control lifecycle
+// ---------------------------------------------------------------------------
+QSize RdpPane::sessionPixelSize() const
+{
+    const qreal dpr = devicePixelRatioF();
+    int w = qRound(width()  * dpr);
+    int h = qRound(height() * dpr);
+    return QSize(qMax(w, MIN_SESSION_W), qMax(h, MIN_SESSION_H));
+}
+
+QAxObject *RdpPane::advancedSettings()
+{
+    if (m_advanced) return m_advanced;
+    if (!m_ax)      return nullptr;
+
+    // Each AdvancedSettings<N> revision is a superset of the previous one, so
+    // binding the highest available exposes the widest set of properties.
+    for (int v = 9; v >= 2; --v) {
+        QByteArray prop = QString("AdvancedSettings%1").arg(v).toLatin1();
+        if (QAxObject *o = m_ax->querySubObject(prop.constData())) {
+            m_advanced = o;
+            return m_advanced;
         }
-        m_user       = userEdit->text();
-        m_cachedPass = passEdit->text();
+    }
+    m_advanced = m_ax->querySubObject("AdvancedSettings");
+    return m_advanced;
+}
+
+bool RdpPane::createControl()
+{
+    destroyControl();
+
+    m_ax = new QAxWidget(this);
+    // Accept click and tab focus so keystrokes reach the remote session.
+    m_ax->setFocusPolicy(Qt::StrongFocus);
+
+    bool bound = false;
+    for (const char *progId : RDP_CONTROL_PROGIDS) {
+        if (m_ax->setControl(QString::fromLatin1(progId))) {
+            debugLog(QString("RDP: bound ActiveX control %1").arg(progId));
+            bound = true;
+            break;
+        }
+    }
+    if (!bound) {
+        debugLog("RDP: no MsRdpClient ActiveX control could be instantiated");
+        m_ax->deleteLater();
+        m_ax = nullptr;
+        return false;
     }
 
-    m_credKey = QString("TERMSRV/%1").arg(m_host);
-    runHidden("cmdkey.exe", {
-        QString("/generic:%1").arg(m_credKey),
-        QString("/user:%1").arg(m_user),
-        QString("/pass:%1").arg(m_cachedPass)
-    });
+    m_layout->addWidget(m_ax);
 
-    m_existingWindows.clear();
-    EnumWindows(snapshotRdpSessions, reinterpret_cast<LPARAM>(&m_existingWindows));
+    // Event wiring.  ActiveQt builds the metaobject from the type library, so
+    // these are matched by signature at runtime; log any that fail to bind so a
+    // control-version mismatch is diagnosable from debug.log.
+    struct { const char *sig; const char *slot; } events[] = {
+        { SIGNAL(OnConnected()),          SLOT(onAxConnected())        },
+        { SIGNAL(OnLoginComplete()),      SLOT(onAxLoginComplete())    },
+        { SIGNAL(OnDisconnected(int)),    SLOT(onAxDisconnected(int))  },
+        { SIGNAL(OnLogonError(int)),      SLOT(onAxLogonError(int))    },
+        { SIGNAL(OnFatalError(int)),      SLOT(onAxFatalError(int))    },
+    };
+    for (const auto &e : events) {
+        if (!connect(m_ax, e.sig, this, e.slot))
+            debugLog(QString("RDP: failed to connect event %1").arg(e.sig));
+    }
+    return true;
+}
 
-    const qreal dpr = devicePixelRatioF();
-    const int pw = qRound(width()  * dpr);
-    const int ph = qRound(height() * dpr);
+void RdpPane::destroyControl()
+{
+    if (!m_ax) return;
 
-    QStringList args;
-    args << QString("/v:%1:%2").arg(m_host).arg(m_port);
-    if (pw > 0 && ph > 0)
-        args << QString("/w:%1").arg(pw) << QString("/h:%1").arg(ph);
+    m_ax->disconnect(this);
 
-    m_process = new QProcess(this);
-    connect(m_process, &QProcess::finished, this, &RdpPane::onProcessFinished);
-    m_process->start("mstsc.exe", args);
+    // Connected: 0 = disconnected, 1 = connected, 2 = connecting.
+    if (m_ax->property("Connected").toInt() != 0)
+        m_ax->dynamicCall("Disconnect()");
 
-    if (!m_process->waitForStarted(5000)) {
-        m_status->setText("Failed to launch mstsc.exe.");
+    m_advanced = nullptr;          // parented to m_ax, released with it
+    m_ax->clear();                 // release the COM object
+    m_layout->removeWidget(m_ax);
+    m_ax->deleteLater();
+    m_ax = nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// Connect
+// ---------------------------------------------------------------------------
+void RdpPane::connectToHost()
+{
+    m_userClosing = false;
+
+    if (m_cachedPass.isEmpty() && !promptForCredentials()) {
+        showStatus("Connection cancelled.");
         return;
     }
 
-    // Register a WinEvent hook on this specific mstsc PID so we are notified
-    // the instant TscShellContainerClass becomes visible — before DWM composites
-    // even one frame of the standalone window.
-    DWORD pid = static_cast<DWORD>(m_process->processId());
-    if (pid) {
-        s_paneByPid[pid] = this;
-        m_winEventHook = reinterpret_cast<quintptr>(
-            SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_SHOW,
-                            nullptr, rdpWinEventProc, pid, 0,
-                            WINEVENT_OUTOFCONTEXT));
+    showStatus(QString("Connecting to %1...").arg(m_host));
+
+    if (!createControl()) {
+        showStatus("The Remote Desktop ActiveX control (mstscax.dll) "
+                   "is unavailable on this system.");
+        return;
     }
 
-    // Fallback poll in case the hook delivery is delayed.
-    m_pollTimer = new QTimer(this);
-    connect(m_pollTimer, &QTimer::timeout, this, &RdpPane::pollForWindow);
-    m_pollTimer->start(100);
-    QTimer::singleShot(300000, m_pollTimer, &QTimer::stop);
-}
+    const QSize px = sessionPixelSize();
 
-void RdpPane::embedWindow(WId hwndId)
-{
-    if (m_mstscHwnd) return; // Already embedded (hook and poll both fire — ignore second)
+    m_ax->setProperty("Server",        m_host);
+    m_ax->setProperty("UserName",      m_user);
+    m_ax->setProperty("DesktopWidth",  px.width());
+    m_ax->setProperty("DesktopHeight", px.height());
+    if (!m_domain.isEmpty())
+        m_ax->setProperty("Domain", m_domain);
 
-    if (m_pollTimer) m_pollTimer->stop();
-
-    // Unhook now that we have the window — no more events needed.
-    if (m_winEventHook) {
-        UnhookWinEvent(reinterpret_cast<HWINEVENTHOOK>(m_winEventHook));
-        m_winEventHook = 0;
-        if (m_process)
-            s_paneByPid.remove(static_cast<DWORD>(m_process->processId()));
+    if (QAxObject *adv = advancedSettings()) {
+        adv->setProperty("RDPPort",              m_port);
+        adv->setProperty("ClearTextPassword",    m_cachedPass);
+        // Scale the remote image to the tab while a resize is in flight; the
+        // debounced UpdateSessionDisplaySettings then restores a 1:1 mapping.
+        adv->setProperty("SmartSizing",          true);
+        // NLA — required by default on current Windows Server builds.
+        adv->setProperty("EnableCredSspSupport", true);
+        // 2 = warn but allow the user to continue if server identity cannot be
+        // verified, matching mstsc.exe's default behaviour.
+        adv->setProperty("AuthenticationLevel",  2);
+        adv->setProperty("DisplayConnectionBar", false);
+        adv->setProperty("GrabFocusOnConnect",   true);
+    } else {
+        debugLog("RDP: AdvancedSettings unavailable; connecting with defaults");
     }
 
-    HWND hwnd = reinterpret_cast<HWND>(hwndId);
-
-    // Hide immediately — when called from the WinEvent hook the window has just
-    // become visible but has not yet been composited; from the fallback poll it
-    // may already have been painted once.  Either way, hide before embedding.
-    ShowWindow(hwnd, SW_HIDE);
-
-    LONG style = GetWindowLong(hwnd, GWL_STYLE);
-    style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX |
-               WS_MAXIMIZEBOX | WS_SYSMENU | WS_BORDER);
-    style |= WS_CHILD;
-    SetWindowLong(hwnd, GWL_STYLE, style);
-
-    LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-    exStyle &= ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE |
-                 WS_EX_CLIENTEDGE | WS_EX_STATICEDGE);
-    SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
-
-    HWND ours = reinterpret_cast<HWND>(winId());
-    SetParent(hwnd, ours);
-    m_mstscHwnd = hwndId;
-
-    const qreal dpr = devicePixelRatioF();
-    SetWindowPos(hwnd, HWND_TOP, 0, 0,
-                 qRound(width() * dpr), qRound(height() * dpr),
-                 SWP_FRAMECHANGED | SWP_SHOWWINDOW);
-
-    m_status->hide();
-
-    if (!m_credKey.isEmpty()) {
-        runHidden("cmdkey.exe", { QString("/delete:%1").arg(m_credKey) });
-        m_credKey.clear();
-    }
-
-    m_statsHost = m_host;
-    m_statsUser = m_user;
-    m_statsPass = m_cachedPass;
-    startStatsPolling();
+    m_ax->dynamicCall("Connect()");
 }
 
 void RdpPane::reconnect()
 {
-    disconnectRdp();
-    m_status->setText(QString("Reconnecting to %1...").arg(m_host));
-    m_status->show();
+    destroyControl();
     QTimer::singleShot(0, this, &RdpPane::connectToHost);
 }
 
-RdpPane::~RdpPane()
+// ---------------------------------------------------------------------------
+// Control events
+// ---------------------------------------------------------------------------
+void RdpPane::onAxConnected()
 {
-    if (m_winEventHook) {
-        UnhookWinEvent(reinterpret_cast<HWINEVENTHOOK>(m_winEventHook));
-        if (m_process)
-            s_paneByPid.remove(static_cast<DWORD>(m_process->processId()));
-    }
-    if (m_mstscHwnd) {
-        HWND hwnd = reinterpret_cast<HWND>(m_mstscHwnd);
-        LONG style = GetWindowLong(hwnd, GWL_STYLE);
-        style &= ~WS_CHILD;
-        style |= WS_POPUP;
-        SetWindowLong(hwnd, GWL_STYLE, style);
-        SetParent(hwnd, nullptr);
-        m_mstscHwnd = 0;
-    }
-    if (m_process) {
-        m_process->disconnect();
-        if (m_process->state() != QProcess::NotRunning)
-            m_process->kill();
-    }
-    if (!m_credKey.isEmpty())
-        runHidden("cmdkey.exe", { QString("/delete:%1").arg(m_credKey) });
+    m_status->hide();
 }
 
-void RdpPane::pollForWindow()
+void RdpPane::onAxLoginComplete()
 {
-    // Fallback for cases where the WinEvent hook delivery is delayed.
-    // embedWindow guards against double-call if the hook already fired.
-    RdpEnumData data { &m_existingWindows, nullptr };
-    EnumWindows(findRdpSession, reinterpret_cast<LPARAM>(&data));
-    if (data.found)
-        embedWindow(reinterpret_cast<WId>(data.found));
+    m_status->hide();
+
+    // Stats polling reuses the session credentials for remote WMI.
+    m_statsHost = m_host;
+    m_statsUser = m_domain.isEmpty() ? m_user
+                                     : QString("%1\\%2").arg(m_domain, m_user);
+    m_statsPass = m_cachedPass;
+    startStatsPolling();
 }
 
-void RdpPane::resizeEvent(QResizeEvent *event)
+void RdpPane::onAxLogonError(int lError)
 {
-    QWidget::resizeEvent(event);
-    if (!m_mstscHwnd) return;
-    if (event->size().width() <= 0 || event->size().height() <= 0) return;
-
-    // Resize the HWND immediately so the session fills the tab during the drag,
-    // then reconnect at the correct resolution 500 ms after the drag settles.
-    // mstsc stretches its content to fill the HWND during the drag; the
-    // reconnect (using cached credentials) restores the native resolution.
-    HWND hwnd = reinterpret_cast<HWND>(m_mstscHwnd);
-    const qreal dpr = devicePixelRatioF();
-    SetWindowPos(hwnd, nullptr,
-                 0, 0,
-                 qRound(event->size().width()  * dpr),
-                 qRound(event->size().height() * dpr),
-                 SWP_NOZORDER | SWP_NOACTIVATE);
-
-    if (!m_resizeTimer) {
-        m_resizeTimer = new QTimer(this);
-        m_resizeTimer->setSingleShot(true);
-        connect(m_resizeTimer, &QTimer::timeout, this, &RdpPane::reconnect);
-    }
-    m_resizeTimer->start(500);
+    // -1 bad password, -3 other logon failure.  Drop the cached password so the
+    // next connect attempt re-prompts instead of silently failing again.
+    if (lError == -1 || lError == -3)
+        m_cachedPass.clear();
+    debugLog(QString("RDP: logon error %1").arg(lError));
 }
 
-void RdpPane::onProcessFinished()
+QString RdpPane::disconnectText(int discReason)
 {
-    if (m_pollTimer) m_pollTimer->stop();
-    if (m_winEventHook) {
-        UnhookWinEvent(reinterpret_cast<HWINEVENTHOOK>(m_winEventHook));
-        m_winEventHook = 0;
-        if (m_process)
-            s_paneByPid.remove(static_cast<DWORD>(m_process->processId()));
+    QString detail;
+    if (m_ax) {
+        uint extended = m_ax->property("ExtendedDisconnectReason").toUInt();
+        QVariant desc = m_ax->dynamicCall(
+            "GetErrorDescription(uint,uint)", uint(discReason), extended);
+        detail = desc.toString().trimmed();
     }
-    m_mstscHwnd = 0;
-    m_cachedPass.clear();
+    if (detail.isEmpty())
+        return QString("Disconnected from %1.").arg(m_host);
+    return QString("Disconnected from %1: %2").arg(m_host, detail);
+}
+
+void RdpPane::onAxDisconnected(int discReason)
+{
     stopStatsPolling();
-    m_status->setText(QString("Disconnected from %1.").arg(m_host));
-    m_status->show();
+    if (m_userClosing) return;
+    // Hide rather than destroy: we are inside the control's own event dispatch,
+    // and releasing the COM object here would re-enter it.  destroyControl()
+    // runs later from reconnect() or disconnectRdp().
+    if (m_ax) m_ax->hide();
+    showStatus(disconnectText(discReason));
+}
+
+void RdpPane::onAxFatalError(int errorCode)
+{
+    stopStatsPolling();
+    debugLog(QString("RDP: fatal error %1").arg(errorCode));
+    if (m_userClosing) return;
+    if (m_ax) m_ax->hide();
+    showStatus(QString("Remote Desktop error %1 on %2.")
+                   .arg(errorCode).arg(m_host));
+}
+
+bool RdpPane::focusNextPrevChild(bool)
+{
+    return false;
 }
 
 void RdpPane::disconnectRdp()
 {
-    if (m_pollTimer) m_pollTimer->stop();
+    m_userClosing = true;
     if (m_resizeTimer) m_resizeTimer->stop();
     stopStatsPolling();
+    destroyControl();
+}
 
-    if (m_winEventHook) {
-        UnhookWinEvent(reinterpret_cast<HWINEVENTHOOK>(m_winEventHook));
-        m_winEventHook = 0;
-        if (m_process)
-            s_paneByPid.remove(static_cast<DWORD>(m_process->processId()));
-    }
+// ---------------------------------------------------------------------------
+// Resize — the control scales the image immediately (SmartSizing); once the
+// drag settles we ask the server for a native-resolution desktop so text stays
+// crisp.  UpdateSessionDisplaySettings needs RDP 8.1+ on both ends; when it is
+// unavailable the call is a no-op and SmartSizing keeps the session usable.
+// ---------------------------------------------------------------------------
+void RdpPane::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    if (!m_ax) return;
+    if (event->size().width() <= 0 || event->size().height() <= 0) return;
 
-    if (!m_credKey.isEmpty()) {
-        runHidden("cmdkey.exe", { QString("/delete:%1").arg(m_credKey) });
-        m_credKey.clear();
+    if (!m_resizeTimer) {
+        m_resizeTimer = new QTimer(this);
+        m_resizeTimer->setSingleShot(true);
+        connect(m_resizeTimer, &QTimer::timeout, this, &RdpPane::applyPendingResize);
     }
+    m_resizeTimer->start(500);
+}
 
-    if (m_mstscHwnd) {
-        HWND hwnd = reinterpret_cast<HWND>(m_mstscHwnd);
-        LONG style = GetWindowLong(hwnd, GWL_STYLE);
-        style &= ~WS_CHILD;
-        style |= WS_POPUP;
-        SetWindowLong(hwnd, GWL_STYLE, style);
-        SetParent(hwnd, nullptr);
-        m_mstscHwnd = 0;
-        PostMessage(hwnd, WM_CLOSE, 0, 0);
-    }
+void RdpPane::applyPendingResize()
+{
+    if (!m_ax) return;
+    if (m_ax->property("Connected").toInt() != 1) return;
 
-    if (m_process) {
-        m_process->disconnect();
-        if (m_process->state() != QProcess::NotRunning)
-            m_process->kill();
-    }
+    const QSize px = sessionPixelSize();
+    // (width, height, physicalWidth, physicalHeight, orientation,
+    //  desktopScaleFactor, deviceScaleFactor) — 0 physical size means
+    //  "unspecified"; scale factors of 100 keep the server at 1:1.
+    m_ax->dynamicCall("UpdateSessionDisplaySettings(uint,uint,uint,uint,uint,uint,uint)",
+                      uint(px.width()), uint(px.height()),
+                      uint(0), uint(0), uint(0),
+                      uint(100), uint(100));
 }
 
 // ---------------------------------------------------------------------------
