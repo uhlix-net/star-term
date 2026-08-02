@@ -215,9 +215,16 @@ bool WslSession::openPty(QString *error) {
         return false;
     }
 
+    // The distribution name must NOT be quoted. wsl.exe parses its own command
+    // line and keeps surrounding quotes as part of the name, so
+    //     --distribution "Ubuntu"   fails with WSL_E_DISTRO_NOT_FOUND
+    //     --distribution Ubuntu     succeeds
+    // (verified against wsl.exe directly).  A name containing spaces therefore
+    // has no quoting form that works here.
+    //
     // CreateProcessW may write to the command line buffer, so it must be mutable.
     const std::wstring cmd =
-        QString("wsl.exe --distribution \"%1\"").arg(m_distro).toStdWString();
+        QString("wsl.exe --distribution %1").arg(m_distro).toStdWString();
     std::vector<wchar_t> cmdBuf(cmd.begin(), cmd.end());
     cmdBuf.push_back(L'\0');
 
