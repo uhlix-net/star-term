@@ -20,24 +20,23 @@
 #endif
 
 // ---------------------------------------------------------------------------
-// The RDP ActiveX control ships with Windows in mstscax.dll.  Each Windows
-// release registers a new versioned coclass; we bind to the newest one present
-// so we get the newest feature set (RemoteFX, live display resize, ...) and
-// fall back down the chain on older systems.
+// The RDP ActiveX control ships with Windows in mstscax.dll.  Its coclasses are
+// named MsRdpClient<N>[NotSafeForScripting] in the MSTSCLib type library, but
+// those names are NOT registered as ProgIDs — the registered ProgIDs are
+// MsTscAx.MsTscAx.<N>, whose version index is unrelated to the coclass number.
 //
-// The "NotSafeForScripting" variants are required: the script-safe coclasses
-// refuse to accept a password through ClearTextPassword.
+// Those ProgIDs resolve to the NotSafeForScripting coclasses, which is what we
+// need: the script-safe variants refuse to accept a password through
+// ClearTextPassword.  (Verified on Windows: MsTscAx.MsTscAx.13 ->
+// {3F859AA3-C2D4-4FAA-B0E4-FD0C9C4E5E3A} "Microsoft RDP Client Control -
+// version 13", with no safe-for-scripting implemented category.)
+//
+// Walk newest-first so the machine's most capable control wins; the upper bound
+// is deliberately ahead of what ships today so future releases bind without a
+// code change.
 // ---------------------------------------------------------------------------
-static const char *RDP_CONTROL_PROGIDS[] = {
-    "MsRdpClient11NotSafeForScripting",
-    "MsRdpClient10NotSafeForScripting",
-    "MsRdpClient9NotSafeForScripting",
-    "MsRdpClient8NotSafeForScripting",
-    "MsRdpClient7NotSafeForScripting",
-    "MsRdpClient6NotSafeForScripting",
-    "MsRdpClient5NotSafeForScripting",
-    "MsTscAxNotSafeForScripting",
-};
+static const int RDP_PROGID_NEWEST = 16;
+static const int RDP_PROGID_OLDEST = 2;
 
 // Minimum remote desktop geometry the control will accept.
 static const int MIN_SESSION_W = 640;
@@ -166,12 +165,17 @@ bool RdpPane::createControl()
     m_ax->setFocusPolicy(Qt::StrongFocus);
 
     bool bound = false;
-    for (const char *progId : RDP_CONTROL_PROGIDS) {
-        if (m_ax->setControl(QString::fromLatin1(progId))) {
+    for (int v = RDP_PROGID_NEWEST; v >= RDP_PROGID_OLDEST && !bound; --v) {
+        QString progId = QString("MsTscAx.MsTscAx.%1").arg(v);
+        if (m_ax->setControl(progId)) {
             debugLog(QString("RDP: bound ActiveX control %1").arg(progId));
             bound = true;
-            break;
         }
+    }
+    // Version-independent ProgID as a last resort.
+    if (!bound && m_ax->setControl(QStringLiteral("MsTscAx.MsTscAx"))) {
+        debugLog("RDP: bound ActiveX control MsTscAx.MsTscAx");
+        bound = true;
     }
     if (!bound) {
         debugLog("RDP: no MsRdpClient ActiveX control could be instantiated");
