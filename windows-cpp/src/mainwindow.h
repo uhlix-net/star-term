@@ -59,6 +59,9 @@ private:
     void closeRdpPane(RdpPane *pane);
     void startSession(SessionPane *pane, const QJsonObject &params);
     void wireSession(SessionPane *pane, TerminalSession *session);
+    void updateWindowTitle();
+    void saveWindowState();
+    void restoreWindowState();
     void reconnectPane(SessionPane *pane);
     void onDataToSend(SessionPane *pane, const QByteArray &data);
     void onSizeChanged(SessionPane *pane, int cols, int rows);

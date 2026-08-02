@@ -25,6 +25,20 @@ RequestExecutionLevel admin
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
 
+; Pushes "1" when star_term.exe is running, "0" otherwise.
+; find returns 0 when it matches a line, 1 when it does not.
+Function IsAppRunning
+  nsExec::ExecToStack 'cmd.exe /c tasklist /FI "IMAGENAME eq star_term.exe" /NH | find /I "star_term.exe"'
+  Pop $R0   ; exit code
+  Pop $R1   ; captured output (unused)
+  StrCmp $R0 "0" running notrunning
+  running:
+    Push "1"
+    Return
+  notrunning:
+    Push "0"
+FunctionEnd
+
 Function .onInit
   SetRegView 64
 
@@ -33,8 +47,12 @@ Function .onInit
   BringToFront
 
   ; Check if the application is currently running and offer to close it.
-    FindWindow $0 "" "Star Term"
-    IntCmp $0 0 not_running app_running app_running
+  ; The main window title now tracks the active session ("user@host - Star
+  ; Term"), so FindWindow against a fixed title no longer matches — detect the
+  ; process by image name instead.
+    Call IsAppRunning
+    Pop $0
+    StrCmp $0 "0" not_running
 
   app_running:
     MessageBox MB_YESNO|MB_ICONQUESTION \
@@ -42,15 +60,19 @@ Function .onInit
       IDYES close_app IDNO abort_install
 
   close_app:
-    SendMessage $0 ${WM_CLOSE} 0 0
+    ; taskkill without /F posts WM_CLOSE, so the app shuts down cleanly and
+    ; still gets to save its window state.
+    nsExec::Exec 'taskkill.exe /IM star_term.exe'
+    Pop $0
     Sleep 2000
-    ; Verify it actually closed; if not, warn and abort.
-    FindWindow $0 "" "Star Term"
-    IntCmp $0 0 not_running still_running still_running
+    Call IsAppRunning
+    Pop $0
+    StrCmp $0 "0" not_running
 
   still_running:
     ; Graceful close failed — force terminate and clean up silently
-    ExecWait 'taskkill.exe /F /IM star_term.exe'
+    nsExec::Exec 'taskkill.exe /F /IM star_term.exe'
+    Pop $0
     Sleep 500
     RMDir /r "$TEMP\star_term_*"
     Goto not_running
