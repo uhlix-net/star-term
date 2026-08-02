@@ -12,6 +12,9 @@
 #include "sidebar.h"
 #include "sshsession.h"
 #include "statusbar.h"
+#include "terminalsession.h"
+#include "wsldialog.h"
+#include "wslsession.h"
 #include "terminalwidget.h"
 #include "theme.h"
 #include "rdppane.h"
@@ -58,9 +61,13 @@
 #include <QTimer>
 #include <QUrl>
 
-static const QString APP_VERSION = "0.6.0";
+static const QString APP_VERSION = "0.6.1";
 
-static const QString UPDATE_HISTORY = R"(Version 0.6.0
+static const QString UPDATE_HISTORY = R"(Version 0.6.1
+
+- Fixed embedded RDP sessions failing to start with "the Remote Desktop ActiveX control is unavailable"
+
+Version 0.6.0
 
 - Embedded RDP sessions now use the Remote Desktop ActiveX control instead of launching and reparenting mstsc.exe
 - RDP windows resize in place — no reconnect when the window is resized
@@ -191,6 +198,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     m_connectAction->setIcon(Icons::connectIcon());
     connect(m_connectAction, &QAction::triggered, this, &MainWindow::openConnectionDialog);
 
+    m_wslConnectAction = new QAction("Connect to WSL...", this);
+    connect(m_wslConnectAction, &QAction::triggered, this, &MainWindow::openWslDialog);
+
     m_closeSessionAction = new QAction("Close Session", this);
     m_closeSessionAction->setIcon(Icons::disconnectIcon());
     connect(m_closeSessionAction, &QAction::triggered, this, &MainWindow::disconnectSession);
@@ -206,6 +216,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     QMenu *fileMenu = menuBar()->addMenu("File");
     fileMenu->addAction(m_connectAction);
+    fileMenu->addAction(m_wslConnectAction);
     fileMenu->addAction(m_closeSessionAction);
     fileMenu->addSeparator();
     fileMenu->addAction(exportAction);
@@ -519,18 +530,87 @@ void MainWindow::onTabChanged(int index) {
 // -----------------------------------------------------------------------
 // Session connection
 // -----------------------------------------------------------------------
+void MainWindow::openWslDialog() {
+    WslConnectDialog dlg(this);
+    if (!dlg.hasDistributions()) {
+        QMessageBox::information(this, "No WSL Distributions",
+            "No WSL distributions were found.\n\n"
+            "Install one with \"wsl --install\" and try again.");
+        return;
+    }
+    if (!dlg.exec()) return;
+
+    const QString distro = dlg.selectedDistribution();
+    if (distro.isEmpty()) return;
+
+    // Boot the distribution first if it is not running. Opening the shell would
+    // start it implicitly, but that can take several seconds during which the
+    // terminal just looks hung.
+    if (!wslRunningDistributions().contains(distro)) {
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        QString error;
+        const bool started = wslStartDistribution(distro, &error);
+        QApplication::restoreOverrideCursor();
+
+        if (!started) {
+            QMessageBox::warning(this, "WSL",
+                QString("Could not start the %1 distribution.\n\n%2")
+                    .arg(distro, error));
+            return;
+        }
+    }
+
+    QJsonObject params;
+    params["type"]   = "wsl";
+    params["distro"] = distro;
+
+    QJsonObject settings = loadSettings();
+    SessionPane *pane = new SessionPane(
+        QString("WSL: %1").arg(distro),
+        settings.value("font_family").toString("Courier New"),
+        settings.value("font_size").toInt(10),
+        settings.value("cursor_style").toString("underline")
+    );
+    addPane(pane);
+
+    connect(pane, &SessionPane::reconnectRequested, this, [this, pane]() {
+        reconnectPane(pane);
+    });
+
+    startSession(pane, params);
+}
+
 void MainWindow::openConnectionDialog() {
     ConnectionDialog dlg(this);
-    if (dlg.exec()) {
-        QJsonObject params = dlg.getConnectionParams();
-        QString name = QString("%1@%2").arg(
-            params["username"].toString(), params["host"].toString());
-        connectSession(params, name);
+    if (!dlg.exec()) return;
+
+    QJsonObject params = dlg.getConnectionParams();
+    QString name = QString("%1@%2").arg(
+        params["username"].toString(), params["host"].toString());
+
+    if (params.value("type").toString() == "rdp") {
+        params["name"] = name;
+        connectSavedSession(params);
+        return;
     }
+
+    // The dialog no longer collects a password, so prompt for one here — the
+    // same flow a saved session uses.  A private key supplies its own passphrase.
+    if (params["key_path"].toString().isEmpty()) {
+        bool ok = false;
+        QString password = QInputDialog::getText(
+            this, "Password",
+            QString("Password for %1:").arg(name),
+            QLineEdit::Password, "", &ok);
+        if (!ok) return;
+        params["password"] = password;
+    }
+
+    connectSession(params, name);
 }
 
 void MainWindow::connectSavedSession(const QJsonObject &session) {
-    // RDP sessions open in an embedded tab using Win32 window embedding (mstsc.exe reparented).
+    // RDP sessions open in an embedded tab hosting the Remote Desktop ActiveX control.
     if (session.value("type").toString("ssh") == "rdp") {
         RdpPane *rdp = new RdpPane(session, this);
         m_tabs->addTab(rdp, rdp->name);
@@ -602,9 +682,55 @@ void MainWindow::connectSession(const QJsonObject &params, const QString &name) 
     startSession(pane, params);
 }
 
+// Signal wiring shared by every backend. Anything SSH-specific stays in
+// startSession so a WSL pane behaves identically for logging, macros,
+// multi-exec broadcast and reconnect.
+void MainWindow::wireSession(SessionPane *pane, TerminalSession *session) {
+    pane->session = session;
+
+    connect(session, &TerminalSession::dataReceived, pane->terminal, &TerminalWidget::feed);
+    connect(session, &TerminalSession::dataReceived, pane->cwdTracker, &CwdTracker::feedServerData);
+    connect(session, &TerminalSession::dataReceived, this, [this, pane](const QByteArray &data) {
+        if (QFile *f = m_sessionLogs.value(pane)) {
+            static QRegularExpression s_ansi(
+                R"(\x1B(?:[@-Z\-_]|\[[0-9;?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)))");
+            QString text = QString::fromUtf8(data);
+            text.remove(s_ansi);
+            f->write(text.toUtf8());
+            f->flush();
+        }
+    });
+    connect(session, &TerminalSession::connectionError, this, &MainWindow::showError);
+    connect(session, &TerminalSession::connectionError, this, [this, pane](const QString&) {
+        onSessionEnded(pane);
+    });
+    connect(session, &TerminalSession::connectionClosed, this, [this, pane]() {
+        onSessionEnded(pane);
+    });
+    connect(session, &TerminalSession::connected, this, [this, pane]() {
+        onSessionConnected(pane);
+    });
+    connect(pane, &SessionPane::statsUpdated, this, [this, pane](const QJsonObject &stats) {
+        if (!m_multiExecAction->isChecked() && pane == m_tabs->currentWidget())
+            m_statusBar->updateStats(stats);
+    });
+}
+
 void MainWindow::startSession(SessionPane *pane, const QJsonObject &params) {
     pane->connectionParams = params;
     pane->reconnectBtn->setVisible(false);
+
+    // Local WSL shell in a pseudo-console rather than an SSH channel.
+    if (params.value("type").toString("ssh") == "wsl") {
+        WslSession *wsl = new WslSession(
+            params["distro"].toString(),
+            pane->terminal->screen().cols(),
+            pane->terminal->screen().rows()
+        );
+        wireSession(pane, wsl);
+        wsl->start();
+        return;
+    }
 
     SSHSession *session = new SSHSession(
         params["host"].toString(),
@@ -617,34 +743,7 @@ void MainWindow::startSession(SessionPane *pane, const QJsonObject &params) {
         pane->terminal->screen().cols(),
         pane->terminal->screen().rows()
     );
-    pane->session = session;
-
-    connect(session, &SSHSession::dataReceived, pane->terminal, &TerminalWidget::feed);
-    connect(session, &SSHSession::dataReceived, pane->cwdTracker, &CwdTracker::feedServerData);
-    connect(session, &SSHSession::dataReceived, this, [this, pane](const QByteArray &data) {
-        if (QFile *f = m_sessionLogs.value(pane)) {
-            static QRegularExpression s_ansi(
-                R"(\x1B(?:[@-Z\-_]|\[[0-9;?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)))");
-            QString text = QString::fromUtf8(data);
-            text.remove(s_ansi);
-            f->write(text.toUtf8());
-            f->flush();
-        }
-    });
-    connect(session, &SSHSession::connectionError, this, &MainWindow::showError);
-    connect(session, &SSHSession::connectionError, this, [this, pane](const QString&) {
-        onSessionEnded(pane);
-    });
-    connect(session, &SSHSession::connectionClosed, this, [this, pane]() {
-        onSessionEnded(pane);
-    });
-    connect(session, &SSHSession::connected, this, [this, pane]() {
-        onSessionConnected(pane);
-    });
-    connect(pane, &SessionPane::statsUpdated, this, [this, pane](const QJsonObject &stats) {
-        if (!m_multiExecAction->isChecked() && pane == m_tabs->currentWidget())
-            m_statusBar->updateStats(stats);
-    });
+    wireSession(pane, session);
     connect(session, &SSHSession::hostKeyUnknown,
             this, &MainWindow::onHostKeyUnknown);
 

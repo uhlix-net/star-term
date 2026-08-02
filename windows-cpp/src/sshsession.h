@@ -1,4 +1,6 @@
 #pragma once
+#include "terminalsession.h"
+
 #include <QThread>
 #include <QString>
 #include <QByteArray>
@@ -16,7 +18,7 @@
 // The UI thread sends data/resize via lock-free queues; the SSH thread drains
 // them in the read loop. SFTPWorker acquires m_sessionMutex per chunk.
 
-class SSHSession : public QThread {
+class SSHSession : public TerminalSession {
     Q_OBJECT
 public:
     SSHSession(
@@ -32,11 +34,11 @@ public:
     ~SSHSession() override;
 
     // Called from UI thread — enqueue; SSH thread drains in read loop.
-    void send(const QByteArray &data);
-    void resize(int cols, int rows);
+    void send(const QByteArray &data) override;
+    void resize(int cols, int rows) override;
 
     // Interrupt the SSH thread and unblock any pending wait.
-    void stop();
+    void stop() override;
 
     // Returns the session lock; SFTPWorker must hold it around every libssh2 call.
     QMutex          *sessionLock()  { return &m_sessionMutex; }
@@ -46,10 +48,8 @@ public:
     LIBSSH2_SFTP    *rawSftp()      const { return m_sftp; }
 
 signals:
-    void dataReceived(const QByteArray &data);
-    void connectionError(const QString &msg);
-    void connectionClosed();
-    void connected();
+    // dataReceived / connectionError / connectionClosed / connected are
+    // inherited from TerminalSession.
 
     // Emitted from SSH thread; UI thread must call acceptHostKey()/rejectHostKey().
     void hostKeyUnknown(const QString &host, const QString &keyType,

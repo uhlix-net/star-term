@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(star_term VERSION 0.6.0)
+project(star_term VERSION 0.6.1)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -29,6 +29,8 @@ set(SOURCES
     src/vt100.cpp
     src/terminalwidget.cpp
     src/sshsession.cpp
+    src/wslsession.cpp
+    src/wsldialog.cpp
     src/statsworker.cpp
     src/updatechecker.cpp
     src/rdppane.cpp
@@ -52,7 +54,10 @@ set(HEADERS
     src/licensing.h
     src/vt100.h
     src/terminalwidget.h
+    src/terminalsession.h
     src/sshsession.h
+    src/wslsession.h
+    src/wsldialog.h
     src/statsworker.h
     src/updatechecker.h
     src/rdppane.h
