@@ -58,9 +58,18 @@
 #include <QTimer>
 #include <QUrl>
 
-static const QString APP_VERSION = "0.5.1";
+static const QString APP_VERSION = "0.6.0";
 
-static const QString UPDATE_HISTORY = R"(Version 0.5.1
+static const QString UPDATE_HISTORY = R"(Version 0.6.0
+
+- Embedded RDP sessions now use the Remote Desktop ActiveX control instead of launching and reparenting mstsc.exe
+- RDP windows resize in place — no reconnect when the window is resized
+- RDP passwords are passed directly to the control and no longer staged in the Windows credential store
+- Tab key is now delivered to the remote desktop instead of moving focus
+- Company logo added to the About dialog
+- Status bar shows license status, or days remaining in the trial
+
+Version 0.5.1
 
 - RDP tab status bar now shows processor queue length, RAM, and page file usage
 - RDP tabs no longer disappear permanently when multi-exec mode is toggled
