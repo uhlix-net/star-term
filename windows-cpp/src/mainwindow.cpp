@@ -65,7 +65,10 @@ static const QString APP_VERSION = "0.6.1";
 
 static const QString UPDATE_HISTORY = R"(Version 0.6.1
 
-- Fixed embedded RDP sessions failing to start with "the Remote Desktop ActiveX control is unavailable"
+- New File > Connect to WSL option for opening a shell in a WSL distribution
+- Installed distributions are detected automatically, with the default one preselected and each shown as running or stopped
+- A stopped distribution is started before its shell opens
+- WSL tabs support session logging, macros and Multi-Exec just like SSH tabs
 
 Version 0.6.0
 
