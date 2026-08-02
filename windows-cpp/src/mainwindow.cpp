@@ -65,7 +65,15 @@ static const QString APP_VERSION = "0.6.1";
 
 static const QString UPDATE_HISTORY = R"(Version 0.6.1
 
-- Fixed embedded RDP sessions failing to start with "the Remote Desktop ActiveX control is unavailable"
+- New File > Connect to WSL option for opening a shell in a WSL distribution
+- Installed distributions are detected automatically, with the default one preselected and each shown as running or stopped
+- A stopped distribution is started before its shell opens
+- WSL tabs support session logging, macros and Multi-Exec just like SSH tabs
+- New Connection dialog now offers a choice of SSH or RDP, with the port and remaining fields following the selected type
+- Passwords are no longer typed into the connection form; SSH asks for one when the session opens
+- Session tabs are no longer wrapped in extra controls — the terminal fills the tab, and the Multi-Exec opt-out appears only while Multi-Exec is on
+- The window title now shows the active session
+- Window size, position and panel layout are remembered between runs
 
 Version 0.6.0
 
@@ -347,6 +355,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(m_sidebar, &SessionSidebar::connectRequested,
             this, &MainWindow::connectSavedSession);
 
+    // --- Window geometry: default size, then whatever was saved last run ---
+    resize(1200, 800);
+    restoreWindowState();
+
     // --- Startup update check (deferred so the window is visible first) ---
     QTimer::singleShot(1500, this, &MainWindow::checkForUpdates);
 }
@@ -356,6 +368,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 // -----------------------------------------------------------------------
 void MainWindow::addPane(SessionPane *pane) {
     m_panes.append(pane);
+    pane->setMultiExecControlsVisible(m_multiExecAction->isChecked());
 
     connect(pane, &SessionPane::dataToSend, this, [this, pane](const QByteArray &data) {
         onDataToSend(pane, data);
@@ -410,7 +423,57 @@ void MainWindow::onTabCloseRequested(int index) {
     if (rdp) closeRdpPane(rdp);
 }
 
+// Reflects the active session in the title bar. NOTE: the NSIS installer no
+// longer looks for a fixed window title when checking whether the app is
+// running — it matches the process name instead.
+void MainWindow::updateWindowTitle() {
+    if (m_multiExecAction && m_multiExecAction->isChecked()) {
+        setWindowTitle("Multi-Exec — Star Term");
+        return;
+    }
+
+    QString session;
+    if (QWidget *current = m_tabs->currentWidget()) {
+        if (SessionPane *pane = qobject_cast<SessionPane*>(current))
+            session = pane->name;
+        else if (RdpPane *rdp = qobject_cast<RdpPane*>(current))
+            session = rdp->name;
+    }
+
+    setWindowTitle(session.isEmpty() ? QStringLiteral("Star Term")
+                                     : QString("%1 — Star Term").arg(session));
+}
+
+void MainWindow::saveWindowState() {
+    QJsonObject s = loadSettings();
+    s["window_geometry"] = QString::fromLatin1(saveGeometry().toBase64());
+    s["window_state"]    = QString::fromLatin1(saveState().toBase64());
+    if (m_splitter)
+        s["splitter_state"] = QString::fromLatin1(m_splitter->saveState().toBase64());
+    saveSettings(s);
+}
+
+void MainWindow::restoreWindowState() {
+    const QJsonObject s = loadSettings();
+
+    const QString geometry = s.value("window_geometry").toString();
+    if (!geometry.isEmpty())
+        restoreGeometry(QByteArray::fromBase64(geometry.toLatin1()));
+
+    const QString state = s.value("window_state").toString();
+    if (!state.isEmpty())
+        restoreState(QByteArray::fromBase64(state.toLatin1()));
+
+    const QString splitter = s.value("splitter_state").toString();
+    if (m_splitter && !splitter.isEmpty())
+        m_splitter->restoreState(QByteArray::fromBase64(splitter.toLatin1()));
+}
+
 void MainWindow::toggleMultiExecView(bool checked) {
+    for (SessionPane *pane : m_panes)
+        pane->setMultiExecControlsVisible(checked);
+    updateWindowTitle();
+
     if (checked) {
         populateMultiExecGrid();
         m_viewStack->setCurrentWidget(m_multiexecContainer);
@@ -516,6 +579,7 @@ void MainWindow::onSizeChanged(SessionPane *pane, int cols, int rows) {
 void MainWindow::onTabChanged(int index) {
     SessionPane *pane = qobject_cast<SessionPane*>(m_tabs->widget(index));
     m_remoteBrowser->setPane(pane);
+    updateWindowTitle();
     if (!m_multiExecAction->isChecked()) {
         if (pane) {
             m_statusBar->updateStats(pane->lastStats);
@@ -718,7 +782,7 @@ void MainWindow::wireSession(SessionPane *pane, TerminalSession *session) {
 
 void MainWindow::startSession(SessionPane *pane, const QJsonObject &params) {
     pane->connectionParams = params;
-    pane->reconnectBtn->setVisible(false);
+    pane->setReconnectVisible(false);
 
     // Local WSL shell in a pseudo-console rather than an SSH channel.
     if (params.value("type").toString("ssh") == "wsl") {
@@ -767,7 +831,7 @@ void MainWindow::onSessionEnded(SessionPane *pane) {
     if (!m_multiExecAction->isChecked() && pane == m_tabs->currentWidget())
         m_statusBar->updateStats({});
     if (m_panes.contains(pane))
-        pane->reconnectBtn->setVisible(true);
+        pane->setReconnectVisible(true);
 }
 
 // -----------------------------------------------------------------------
@@ -1179,6 +1243,7 @@ void MainWindow::importSessions() {
 // Close
 // -----------------------------------------------------------------------
 void MainWindow::closeEvent(QCloseEvent *event) {
+    saveWindowState();
     for (SessionPane *pane : QList<SessionPane*>(m_panes))
         pane->disconnectSession();
     QMainWindow::closeEvent(event);

@@ -21,35 +21,34 @@ SessionPane::SessionPane(
 {
     cwdTracker = new CwdTracker(this);
 
-    QLabel *titleLabel = new QLabel(name);
-    titleLabel->setObjectName("sectionTitle");
-
     terminal = new TerminalWidget(80, 24, fontFamily, fontSize, cursorStyle, this);
 
+    // Shown only while Multi-Exec is active — it means nothing otherwise.
     excludeCheckbox = new QCheckBox("Exclude from Multi-Exec", this);
+    excludeCheckbox->setVisible(false);
 
+    // Offered only after a session drops.
     reconnectBtn = new QPushButton("Reconnect", this);
     reconnectBtn->setVisible(false);
     connect(reconnectBtn, &QPushButton::clicked, this, &SessionPane::reconnectRequested);
 
-    QPushButton *closeBtn = new QPushButton("Close", this);
-    connect(closeBtn, &QPushButton::clicked, this, &SessionPane::closeRequested);
-
-    QWidget *controls = new QWidget(this);
-    QHBoxLayout *ctrlLayout = new QHBoxLayout(controls);
-    ctrlLayout->setContentsMargins(0, 0, 0, 0);
+    // No title label and no Close button: the tab already carries the session
+    // name and a close affordance, so repeating them inside the pane is just
+    // chrome around the terminal.
+    m_controls = new QWidget(this);
+    QHBoxLayout *ctrlLayout = new QHBoxLayout(m_controls);
+    ctrlLayout->setContentsMargins(6, 4, 6, 4);
     ctrlLayout->setSpacing(8);
     ctrlLayout->addWidget(excludeCheckbox);
     ctrlLayout->addStretch();
     ctrlLayout->addWidget(reconnectBtn);
-    ctrlLayout->addWidget(closeBtn);
+    m_controls->setVisible(false);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(6, 6, 6, 6);
-    layout->setSpacing(4);
-    layout->addWidget(titleLabel);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
     layout->addWidget(terminal, 1);
-    layout->addWidget(controls);
+    layout->addWidget(m_controls);
 
     connect(terminal, &TerminalWidget::dataToSend, this, &SessionPane::dataToSend);
     connect(terminal, &TerminalWidget::dataToSend, cwdTracker, &CwdTracker::feedInput);
@@ -62,6 +61,20 @@ SessionPane::~SessionPane() {
 
 void SessionPane::applySettings(const QString &fontFamily, int fontSize, const QString &cursorStyle) {
     terminal->applySettings(fontFamily, fontSize, cursorStyle);
+}
+
+void SessionPane::setReconnectVisible(bool on) {
+    reconnectBtn->setVisible(on);
+    updateControlsVisibility();
+}
+
+void SessionPane::setMultiExecControlsVisible(bool on) {
+    excludeCheckbox->setVisible(on);
+    updateControlsVisibility();
+}
+
+void SessionPane::updateControlsVisibility() {
+    m_controls->setVisible(reconnectBtn->isVisible() || excludeCheckbox->isVisible());
 }
 
 void SessionPane::startStatsWorker() {

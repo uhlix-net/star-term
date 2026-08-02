@@ -72,8 +72,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // Sizing lives in MainWindow so a restored geometry is not overridden here.
     MainWindow window;
-    window.resize(1200, 800);
     window.show();
 
     return app.exec();

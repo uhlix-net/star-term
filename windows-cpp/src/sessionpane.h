@@ -28,6 +28,11 @@ public:
     void startStatsWorker();
     void stopStatsWorker();
 
+    // The control strip below the terminal is shown only when it has something
+    // to offer, so an ordinary connected session is pure terminal.
+    void setReconnectVisible(bool on);
+    void setMultiExecControlsVisible(bool on);
+
     QString          name;
     // SSH or WSL; qobject_cast to SSHSession for the SSH-only facilities.
     TerminalSession *session     = nullptr;
@@ -47,5 +52,8 @@ signals:
     void statsUpdated(const QJsonObject &stats);
 
 private:
+    void updateControlsVisibility();
+
     RemoteStatsWorker *m_statsWorker = nullptr;
+    QWidget           *m_controls    = nullptr;
 };
