@@ -16,6 +16,7 @@ class MacrosPanel;
 class RdpPane;
 class RemoteFileBrowser;
 class SessionPane;
+class TerminalSession;
 class SessionSidebar;
 class SystemStatusBar;
 class UpdateChecker;
@@ -28,6 +29,7 @@ public:
 
 public slots:
     void openConnectionDialog();
+    void openWslDialog();
     void openPreferencesDialog();
     void disconnectSession();
     void showAboutDialog();
@@ -56,6 +58,7 @@ private:
     void closePane(SessionPane *pane);
     void closeRdpPane(RdpPane *pane);
     void startSession(SessionPane *pane, const QJsonObject &params);
+    void wireSession(SessionPane *pane, TerminalSession *session);
     void reconnectPane(SessionPane *pane);
     void onDataToSend(SessionPane *pane, const QByteArray &data);
     void onSizeChanged(SessionPane *pane, int cols, int rows);
@@ -86,6 +89,7 @@ private:
     QHash<SessionPane*, QFile*> m_sessionLogs;
 
     QAction *m_connectAction        = nullptr;
+    QAction *m_wslConnectAction     = nullptr;
     QAction *m_closeSessionAction   = nullptr;
     QAction *m_multiExecAction      = nullptr;
     QAction *m_preferencesAction    = nullptr;

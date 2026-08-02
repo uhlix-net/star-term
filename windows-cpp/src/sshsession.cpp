@@ -40,7 +40,7 @@ SSHSession::SSHSession(
     const QString &term,
     int cols, int rows,
     QObject *parent)
-    : QThread(parent)
+    : TerminalSession(parent)
     , m_host(host), m_port(port)
     , m_username(username), m_password(password)
     , m_keyPath(keyPath), m_keyPassphrase(keyPassphrase)

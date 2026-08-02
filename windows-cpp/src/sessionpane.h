@@ -7,7 +7,7 @@ class QCheckBox;
 class QPushButton;
 class QLabel;
 class RemoteStatsWorker;
-class SSHSession;
+class TerminalSession;
 class TerminalWidget;
 class CwdTracker;
 
@@ -28,8 +28,9 @@ public:
     void startStatsWorker();
     void stopStatsWorker();
 
-    QString     name;
-    SSHSession *session          = nullptr;
+    QString          name;
+    // SSH or WSL; qobject_cast to SSHSession for the SSH-only facilities.
+    TerminalSession *session     = nullptr;
     QJsonObject connectionParams;
     QJsonObject lastStats;          // last received stats; empty = not yet available
     CwdTracker *cwdTracker       = nullptr;

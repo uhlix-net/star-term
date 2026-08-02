@@ -65,9 +65,13 @@ void SessionPane::applySettings(const QString &fontFamily, int fontSize, const Q
 }
 
 void SessionPane::startStatsWorker() {
-    if (!session || m_statsWorker) return;
+    if (m_statsWorker) return;
+    // Stats are gathered by running commands over the SSH channel, so there is
+    // nothing to poll for a local WSL session.
+    SSHSession *ssh = qobject_cast<SSHSession*>(session);
+    if (!ssh) return;
     m_statsWorker = new RemoteStatsWorker(
-        session->rawSession(), session->sessionLock(), this);
+        ssh->rawSession(), ssh->sessionLock(), this);
     connect(m_statsWorker, &RemoteStatsWorker::statsReady,
             this, [this](const QJsonObject &stats) {
         lastStats = stats;

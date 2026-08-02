@@ -518,13 +518,15 @@ void RemoteFileBrowser::setPane(SessionPane *pane) {
                 this, &RemoteFileBrowser::onCwdChanged);
     }
 
-    if (pane->session) {
+    // Browsing is SFTP-backed, so it applies to SSH sessions only — a local WSL
+    // session leaves the pane disabled.
+    if (SSHSession *ssh = qobject_cast<SSHSession*>(pane->session)) {
         // rawSftp() is safe here: it was set in the SSH thread before the
         // connected() signal was emitted, so the queued delivery establishes
         // a happens-before with this UI-thread call.
-        m_session     = pane->session->rawSession();
-        m_sftp        = pane->session->rawSftp();
-        m_sessionLock = pane->session->sessionLock();
+        m_session     = ssh->rawSession();
+        m_sftp        = ssh->rawSftp();
+        m_sessionLock = ssh->sessionLock();
 
         if (m_sftp) {
             m_listWidget->session     = m_session;
