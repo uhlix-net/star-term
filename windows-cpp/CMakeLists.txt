@@ -9,6 +9,12 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network)
 find_package(OpenSSL REQUIRED)
 find_package(Libssh2 REQUIRED)
 
+# ActiveQt container — hosts the Microsoft Terminal Services ActiveX control
+# used by the embedded RDP pane. Windows-only module.
+if(WIN32)
+    find_package(Qt6 REQUIRED COMPONENTS AxContainer)
+endif()
+
 qt_standard_project_setup()
 
 qt_add_resources(APP_RESOURCES resources.qrc)
@@ -92,7 +98,7 @@ target_link_libraries(star_term PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(star_term PRIVATE ws2_32)
+    target_link_libraries(star_term PRIVATE ws2_32 Qt6::AxContainer)
 endif()
 
 # After each Windows build: deploy Qt runtime DLLs and copy vcpkg DLLs next
