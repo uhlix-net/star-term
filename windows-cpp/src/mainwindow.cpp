@@ -58,9 +58,13 @@
 #include <QTimer>
 #include <QUrl>
 
-static const QString APP_VERSION = "0.6.0";
+static const QString APP_VERSION = "0.6.1";
 
-static const QString UPDATE_HISTORY = R"(Version 0.6.0
+static const QString UPDATE_HISTORY = R"(Version 0.6.1
+
+- Fixed embedded RDP sessions failing to start with "the Remote Desktop ActiveX control is unavailable"
+
+Version 0.6.0
 
 - Embedded RDP sessions now use the Remote Desktop ActiveX control instead of launching and reparenting mstsc.exe
 - RDP windows resize in place — no reconnect when the window is resized
