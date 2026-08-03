@@ -108,6 +108,8 @@ public:
     LIBSSH2_SFTP    *sftp        = nullptr;
     QMutex          *sessionLock = nullptr;
     QString          remotePath  = "/";
+    // Windows prefix for a local (WSL) filesystem; empty means SFTP.
+    QString          fsRoot;
 
 signals:
     void uploadRequested(const QStringList &localPaths);
@@ -152,11 +154,20 @@ private:
     void startNextDownload();
     void runWorker(SFTPWorker *worker);
 
+    // A WSL distribution is browsed through its Windows share instead of SFTP:
+    // ordinary file APIs, no session, no worker threads.
+    bool    fsMode() const { return !m_fsRoot.isEmpty(); }
+    void    listFilesystem(const QString &path);
+    QString fsPathFor(const QString &posixPath) const;
+    bool    connected() const { return m_sftp != nullptr || fsMode(); }
+
     SessionPane     *m_pane         = nullptr;
     LIBSSH2_SESSION *m_session      = nullptr;
     LIBSSH2_SFTP    *m_sftp         = nullptr;
     QMutex          *m_sessionLock  = nullptr;
     QString          m_currentPath;
+    QString          m_fsRoot;
+    QString          m_distro;
 
     QLineEdit      *m_pathEdit      = nullptr;
     RemoteFileList *m_listWidget    = nullptr;

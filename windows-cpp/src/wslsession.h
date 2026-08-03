@@ -22,6 +22,14 @@ QString     wslDefaultDistribution();    // "" if it cannot be determined
 // Boots a stopped distribution. Blocks until it is up (or the timeout expires).
 bool wslStartDistribution(const QString &distro, QString *error = nullptr);
 
+// Windows path prefix under which the distribution's files are reachable, e.g.
+// "//wsl.localhost/Ubuntu".  Empty if neither share responds.  Append a POSIX
+// path to it to get something QDir/QFile can open.
+QString wslFilesystemRoot(const QString &distro);
+
+// The login home directory inside the distribution ("" if it cannot be read).
+QString wslHomeDirectory(const QString &distro);
+
 // -----------------------------------------------------------------------
 // A WSL shell running in a Windows pseudo-console (ConPTY).
 // -----------------------------------------------------------------------

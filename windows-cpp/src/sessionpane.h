@@ -56,4 +56,10 @@ private:
 
     RemoteStatsWorker *m_statsWorker = nullptr;
     QWidget           *m_controls    = nullptr;
+
+    // Requested visibility, tracked separately from the widgets: QWidget::isVisible()
+    // reports false whenever an ancestor is hidden, so it cannot be used to decide
+    // whether the (initially hidden) control strip should come up.
+    bool m_reconnectVisible = false;
+    bool m_multiExecVisible = false;
 };
