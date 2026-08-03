@@ -126,6 +126,11 @@ bool RdpPane::promptForCredentials()
     connect(passEdit, &QLineEdit::textChanged, &credDlg, updateOkState);
     updateOkState();
 
+    // A session that already carries a user name only needs the password, so
+    // start there instead of at the end of a field the user will not touch.
+    if (!shownUser.trimmed().isEmpty()) passEdit->setFocus();
+    else                                userEdit->setFocus();
+
     if (credDlg.exec() != QDialog::Accepted) return false;
 
     QString entered = userEdit->text();
