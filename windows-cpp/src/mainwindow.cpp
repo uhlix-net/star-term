@@ -65,6 +65,7 @@ static const QString APP_VERSION = "0.6.2";
 
 static const QString UPDATE_HISTORY = R"(Version 0.6.2
 
+- Fixed the main toolbar and the activity bar swapping places on launch
 - Remote Files now works in WSL sessions, browsing the distribution through its Windows share
 - Fixed the Multi-Exec opt-out checkbox never appearing on session tabs
 - Fixed the Reconnect button never appearing after a session dropped
@@ -297,6 +298,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     // --- Main toolbar ---
     QToolBar *toolbar = new QToolBar("Main Toolbar", this);
+    // saveState()/restoreState() identify toolbars by object name. Without one,
+    // Qt falls back to matching by position and hands this bar's slot to the
+    // vertical activity bar, silently swapping the two on the next launch.
+    toolbar->setObjectName("mainToolBar");
     toolbar->setMovable(false);
     toolbar->setIconSize(QSize(24, 24));
     toolbar->addAction(m_connectAction);
@@ -348,6 +353,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     panelGroup->addAction(m_macrosAction);
 
     QToolBar *activityBar = new QToolBar("Activity Bar", this);
+    activityBar->setObjectName("activityBar");
     activityBar->setMovable(false);
     activityBar->setOrientation(Qt::Vertical);
     activityBar->setIconSize(QSize(24, 24));
@@ -452,10 +458,16 @@ void MainWindow::updateWindowTitle() {
                                      : QString("%1 — Star Term").arg(session));
 }
 
+// Bumped whenever the toolbar layout changes in a way that makes an older
+// saved state wrong. restoreState() rejects a state carrying a different
+// version, so a stale layout is discarded instead of being applied.
+// 1: toolbars gained object names, without which they were restored swapped.
+static const int WINDOW_STATE_VERSION = 1;
+
 void MainWindow::saveWindowState() {
     QJsonObject s = loadSettings();
     s["window_geometry"] = QString::fromLatin1(saveGeometry().toBase64());
-    s["window_state"]    = QString::fromLatin1(saveState().toBase64());
+    s["window_state"]    = QString::fromLatin1(saveState(WINDOW_STATE_VERSION).toBase64());
     if (m_splitter)
         s["splitter_state"] = QString::fromLatin1(m_splitter->saveState().toBase64());
     saveSettings(s);
@@ -470,7 +482,7 @@ void MainWindow::restoreWindowState() {
 
     const QString state = s.value("window_state").toString();
     if (!state.isEmpty())
-        restoreState(QByteArray::fromBase64(state.toLatin1()));
+        restoreState(QByteArray::fromBase64(state.toLatin1()), WINDOW_STATE_VERSION);
 
     const QString splitter = s.value("splitter_state").toString();
     if (m_splitter && !splitter.isEmpty())
