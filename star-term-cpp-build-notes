@@ -24,4 +24,4 @@ Update Installer
 ---
 
 1. cd U:\home\huhl\git-repos\star-term\windows-cpp\installer
-2. c:\Program Files (x86)\NSIS\makensis.exe" setup.nsi
+2. "c:\Program Files (x86)\NSIS\makensis.exe" setup.nsi

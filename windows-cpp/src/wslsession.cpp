@@ -1,6 +1,7 @@
 #include "wslsession.h"
 #include "debug.h"
 
+#include <QDir>
 #include <QMutexLocker>
 #include <QProcess>
 #include <QSettings>
@@ -126,6 +127,37 @@ bool wslStartDistribution(const QString &distro, QString *error) {
         return false;
     }
     return true;
+}
+
+QString wslFilesystemRoot(const QString &distro) {
+    if (distro.isEmpty()) return {};
+    // wsl.localhost is the current share; wsl$ is the older name and is still
+    // served, so it covers builds that predate the rename.
+    for (const QString &prefix : {QStringLiteral("//wsl.localhost/"),
+                                  QStringLiteral("//wsl$/")}) {
+        const QString root = prefix + distro;
+        if (QDir(root).exists()) return root;
+    }
+    debugLog(QString("WSL: no reachable filesystem share for %1").arg(distro));
+    return {};
+}
+
+QString wslHomeDirectory(const QString &distro) {
+    QProcess proc;
+    hideConsole(proc);
+    // --exec runs printenv directly, so the distribution name and the arguments
+    // are separate tokens and nothing has to survive a shell's quoting rules.
+    proc.start("wsl.exe", {"--distribution", distro, "--exec", "printenv", "HOME"});
+
+    if (!proc.waitForFinished(10000)) {
+        proc.kill();
+        return {};
+    }
+    if (proc.exitCode() != 0) return {};
+
+    // Unlike wsl.exe's own listings, this is the child process's stdout, which
+    // passes through as raw UTF-8 rather than UTF-16.
+    return QString::fromUtf8(proc.readAllStandardOutput()).trimmed();
 }
 
 // ---------------------------------------------------------------------------

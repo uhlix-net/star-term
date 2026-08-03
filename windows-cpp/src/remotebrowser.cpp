@@ -1,6 +1,7 @@
 #include "remotebrowser.h"
 #include "sessionpane.h"
 #include "sshsession.h"
+#include "wslsession.h"
 #include "icons.h"
 
 #include <QDir>
@@ -8,6 +9,7 @@
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -368,6 +370,26 @@ void RemoteFileList::dropEvent(QDropEvent *event) {
 // Download selected files to a temp dir, then hand off to Qt's drag machinery.
 // The session mutex is held per-chunk so the SSH read loop can interleave.
 void RemoteFileList::startDrag(Qt::DropActions /*supportedActions*/) {
+    // WSL: the files are already reachable as Windows paths, so Explorer can
+    // copy them straight from the distribution with nothing staged first.
+    if (!fsRoot.isEmpty()) {
+        const QString base = (remotePath == "/") ? fsRoot : fsRoot + remotePath;
+        QList<QUrl> urls;
+        for (QListWidgetItem *item : selectedItems()) {
+            QVariantList data = item->data(Qt::UserRole).toList();
+            if (data.size() >= 2 && !data[1].toBool())
+                urls << QUrl::fromLocalFile(base + "/" + data[0].toString());
+        }
+        if (urls.isEmpty()) return;
+
+        QMimeData *mime = new QMimeData;
+        mime->setUrls(urls);
+        QDrag *drag = new QDrag(this);
+        drag->setMimeData(mime);
+        drag->exec(Qt::CopyAction);
+        return;
+    }
+
     if (!session || !sftp || !sessionLock) return;
 
     QStringList names;
@@ -473,6 +495,14 @@ RemoteFileBrowser::RemoteFileBrowser(QWidget *parent) : QWidget(parent) {
     m_followBtn = new QPushButton("Follow Current Directory");
     m_followBtn->setCheckable(true);
     m_followBtn->setChecked(true);
+    // Catch up straight away rather than waiting for the next cd — the session
+    // has usually moved elsewhere while following was off.
+    connect(m_followBtn, &QPushButton::toggled, this, [this](bool on) {
+        if (!on || !m_pane || !m_pane->cwdTracker) return;
+        const QString cwd = m_pane->cwdTracker->cwd();
+        if (!cwd.isEmpty() && cwd != m_currentPath) setPath(cwd);
+        else                                        refresh();
+    });
 
     m_progressBar = new QProgressBar;
     m_progressBar->setRange(0, 100);
@@ -492,7 +522,7 @@ RemoteFileBrowser::RemoteFileBrowser(QWidget *parent) : QWidget(parent) {
 }
 
 void RemoteFileBrowser::setPane(SessionPane *pane) {
-    if (m_pane == pane && m_sftp != nullptr) return;
+    if (m_pane == pane && connected()) return;
 
     if (m_pane && m_pane->cwdTracker) {
         disconnect(m_pane->cwdTracker, &CwdTracker::cwdChanged,
@@ -503,11 +533,14 @@ void RemoteFileBrowser::setPane(SessionPane *pane) {
     m_session     = nullptr;
     m_sftp        = nullptr;
     m_sessionLock = nullptr;
+    m_fsRoot.clear();
+    m_distro.clear();
     m_currentPath.clear();
     m_listWidget->clear();
     m_listWidget->session     = nullptr;
     m_listWidget->sftp        = nullptr;
     m_listWidget->sessionLock = nullptr;
+    m_listWidget->fsRoot.clear();
     m_pathEdit->clear();
     m_statusLabel->setText("");
 
@@ -518,8 +551,25 @@ void RemoteFileBrowser::setPane(SessionPane *pane) {
                 this, &RemoteFileBrowser::onCwdChanged);
     }
 
-    // Browsing is SFTP-backed, so it applies to SSH sessions only — a local WSL
-    // session leaves the pane disabled.
+    // A WSL distribution has no SFTP server, but Windows exposes its filesystem
+    // as a share, so the same panel drives ordinary file APIs instead.
+    if (pane->connectionParams.value("type").toString() == "wsl") {
+        m_distro = pane->connectionParams.value("distro").toString();
+        m_fsRoot = wslFilesystemRoot(m_distro);
+        if (m_fsRoot.isEmpty()) {
+            setEnabled(false);
+            m_statusLabel->setText("Distribution files unavailable");
+            return;
+        }
+        m_listWidget->fsRoot = m_fsRoot;
+        setEnabled(true);
+        if (pane->cwdTracker && !pane->cwdTracker->cwd().isEmpty())
+            setPath(pane->cwdTracker->cwd());
+        else
+            resolveHome();
+        return;
+    }
+
     if (SSHSession *ssh = qobject_cast<SSHSession*>(pane->session)) {
         // rawSftp() is safe here: it was set in the SSH thread before the
         // connected() signal was emitted, so the queued delivery establishes
@@ -545,7 +595,36 @@ void RemoteFileBrowser::setPane(SessionPane *pane) {
     }
 }
 
+QString RemoteFileBrowser::fsPathFor(const QString &posixPath) const {
+    if (m_fsRoot.isEmpty()) return {};
+    QString p = posixPath;
+    if (!p.startsWith('/')) p.prepend('/');
+    // The share root is itself the POSIX root, so "/" must not add a separator.
+    return (p == "/") ? m_fsRoot : m_fsRoot + p;
+}
+
+void RemoteFileBrowser::listFilesystem(const QString &path) {
+    QDir dir(fsPathFor(path));
+    if (!dir.exists()) {
+        m_listWidget->clear();
+        m_statusLabel->setText("No access");
+        return;
+    }
+
+    QList<SFTPEntry> entries;
+    const QFileInfoList infos = dir.entryInfoList(
+        QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+    for (const QFileInfo &fi : infos)
+        entries.append({fi.fileName(), fi.isDir(), fi.size()});
+    onListed(path, entries);
+}
+
 void RemoteFileBrowser::resolveHome() {
+    if (fsMode()) {
+        const QString home = wslHomeDirectory(m_distro);
+        onHomeResolved(home.isEmpty() ? QStringLiteral("/") : home);
+        return;
+    }
     if (!m_sftp || !m_session || !m_pane || !m_pane->session) return;
     SFTPWorker *w = new SFTPWorker(m_session, m_sftp, m_sessionLock, SFTPWorker::Home, this);
     connect(w, &SFTPWorker::homeResolved, this, &RemoteFileBrowser::onHomeResolved);
@@ -566,7 +645,10 @@ void RemoteFileBrowser::setPath(const QString &path) {
 }
 
 void RemoteFileBrowser::refresh() {
-    if (!m_sftp || !m_session || m_currentPath.isEmpty()) return;
+    if (m_currentPath.isEmpty()) return;
+    if (fsMode()) { listFilesystem(m_currentPath); return; }
+
+    if (!m_sftp || !m_session) return;
     QString requestedPath = m_currentPath;
     SFTPWorker *w = new SFTPWorker(m_session, m_sftp, m_sessionLock, requestedPath, this);
     connect(w, &SFTPWorker::listed, this, &RemoteFileBrowser::onListed);
@@ -633,43 +715,48 @@ void RemoteFileBrowser::onCwdChanged(const QString &path) {
     if (m_followBtn->isChecked()) setPath(path);
 }
 
+// The menu offers only what the click actually applies to: a file can be
+// downloaded, empty space is the directory itself and can only receive an
+// upload, and a directory offers neither.
 void RemoteFileBrowser::onContextMenu(const QPoint &pos) {
     QListWidgetItem *item = m_listWidget->itemAt(pos);
-    QStringList fileNames;
-    if (item) {
-        if (!item->isSelected()) {
-            for (QListWidgetItem *sel : m_listWidget->selectedItems())
-                sel->setSelected(false);
-            item->setSelected(true);
-            m_listWidget->setCurrentItem(item);
-        }
-        for (QListWidgetItem *sel : m_listWidget->selectedItems()) {
-            QVariantList data = sel->data(Qt::UserRole).toList();
-            if (data.size() >= 2 && !data[1].toBool())
-                fileNames << data[0].toString();
-        }
+    QMenu menu(this);
+
+    if (!item) {
+        QAction *uploadAction = menu.addAction("Upload...");
+        if (menu.exec(m_listWidget->mapToGlobal(pos)) == uploadAction)
+            onUploadDialog();
+        return;
     }
 
-    QMenu menu(this);
-    QAction *downloadAction = nullptr;
-    if (!fileNames.isEmpty())
-        downloadAction = menu.addAction("Download...");
-    QAction *uploadAction = menu.addAction("Upload...");
-    QAction *chosen = menu.exec(m_listWidget->mapToGlobal(pos));
-    if (downloadAction && chosen == downloadAction)
+    if (!item->isSelected()) {
+        for (QListWidgetItem *sel : m_listWidget->selectedItems())
+            sel->setSelected(false);
+        item->setSelected(true);
+        m_listWidget->setCurrentItem(item);
+    }
+
+    QStringList fileNames;
+    for (QListWidgetItem *sel : m_listWidget->selectedItems()) {
+        QVariantList data = sel->data(Qt::UserRole).toList();
+        if (data.size() >= 2 && !data[1].toBool())
+            fileNames << data[0].toString();
+    }
+    if (fileNames.isEmpty()) return;   // directories only — nothing to offer
+
+    QAction *downloadAction = menu.addAction("Download...");
+    if (menu.exec(m_listWidget->mapToGlobal(pos)) == downloadAction)
         onDownloadDialog(fileNames);
-    else if (chosen == uploadAction)
-        onUploadDialog();
 }
 
 void RemoteFileBrowser::onUploadDialog() {
-    if (!m_sftp || m_currentPath.isEmpty()) return;
+    if (!connected() || m_currentPath.isEmpty()) return;
     QStringList paths = QFileDialog::getOpenFileNames(this, "Upload Files");
     if (!paths.isEmpty()) onUploadRequested(paths);
 }
 
 void RemoteFileBrowser::onDownloadDialog(const QStringList &names) {
-    if (!m_sftp || m_currentPath.isEmpty()) return;
+    if (!connected() || m_currentPath.isEmpty()) return;
     QList<QPair<QString,QString>> pairs;
     if (names.size() == 1) {
         QString localPath = QFileDialog::getSaveFileName(this, "Download File", names[0]);
@@ -688,7 +775,22 @@ void RemoteFileBrowser::onDownloadDialog(const QStringList &names) {
 }
 
 void RemoteFileBrowser::onUploadRequested(const QStringList &localPaths) {
-    if (!m_sftp || !m_session || m_currentPath.isEmpty()) return;
+    if (m_currentPath.isEmpty()) return;
+
+    if (fsMode()) {
+        for (const QString &lp : localPaths) {
+            const QString name = QFileInfo(lp).fileName();
+            const QString dest = fsPathFor(m_currentPath) + "/" + name;
+            // QFile::copy refuses to overwrite, so clear the way first.
+            if (QFile::exists(dest)) QFile::remove(dest);
+            if (!QFile::copy(lp, dest))
+                onError(QString("Could not copy %1").arg(name));
+        }
+        refresh();
+        return;
+    }
+
+    if (!m_sftp || !m_session) return;
     for (const QString &lp : localPaths) {
         QString remotePath = m_currentPath + "/" + QFileInfo(lp).fileName();
         SFTPWorker *w = new SFTPWorker(m_session, m_sftp, m_sessionLock, lp, remotePath, this);
@@ -713,6 +815,15 @@ void RemoteFileBrowser::startNextDownload() {
         m_statusLabel->setText(QString("Downloading %1 (%2/%3)...").arg(name).arg(m_downloadIndex).arg(m_downloadTotal));
     else
         m_statusLabel->setText(QString("Downloading %1...").arg(name));
+
+    if (fsMode()) {
+        const QString src = fsPathFor(m_currentPath) + "/" + name;
+        // The save dialog already confirmed any overwrite.
+        if (QFile::exists(localPath)) QFile::remove(localPath);
+        if (QFile::copy(src, localPath)) onDownloadFinished(QString(), localPath);
+        else onDownloadError(QString("Could not copy %1").arg(name));
+        return;
+    }
 
     SFTPWorker *w = new SFTPWorker(m_session, m_sftp, m_sessionLock, remotePath, localPath, true, this);
     connect(w, &SFTPWorker::progress,    this, &RemoteFileBrowser::onDownloadProgress);

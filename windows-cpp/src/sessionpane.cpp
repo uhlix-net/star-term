@@ -64,17 +64,19 @@ void SessionPane::applySettings(const QString &fontFamily, int fontSize, const Q
 }
 
 void SessionPane::setReconnectVisible(bool on) {
+    m_reconnectVisible = on;
     reconnectBtn->setVisible(on);
     updateControlsVisibility();
 }
 
 void SessionPane::setMultiExecControlsVisible(bool on) {
+    m_multiExecVisible = on;
     excludeCheckbox->setVisible(on);
     updateControlsVisibility();
 }
 
 void SessionPane::updateControlsVisibility() {
-    m_controls->setVisible(reconnectBtn->isVisible() || excludeCheckbox->isVisible());
+    m_controls->setVisible(m_reconnectVisible || m_multiExecVisible);
 }
 
 void SessionPane::startStatsWorker() {

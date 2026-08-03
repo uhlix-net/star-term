@@ -61,9 +61,17 @@
 #include <QTimer>
 #include <QUrl>
 
-static const QString APP_VERSION = "0.6.1";
+static const QString APP_VERSION = "0.6.2";
 
-static const QString UPDATE_HISTORY = R"(Version 0.6.1
+static const QString UPDATE_HISTORY = R"(Version 0.6.2
+
+- Remote Files now works in WSL sessions, browsing the distribution through its Windows share
+- Fixed the Multi-Exec opt-out checkbox never appearing on session tabs
+- Fixed the Reconnect button never appearing after a session dropped
+- Remote Files right-click menu now offers only what applies: Download on a file, Upload on empty space
+- Re-enabling Follow Current Directory refreshes immediately instead of waiting for the next directory change
+
+Version 0.6.1
 
 - New File > Connect to WSL option for opening a shell in a WSL distribution
 - Installed distributions are detected automatically, with the default one preselected and each shown as running or stopped
