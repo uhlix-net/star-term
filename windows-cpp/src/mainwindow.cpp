@@ -65,6 +65,7 @@ static const QString APP_VERSION = "0.6.2";
 
 static const QString UPDATE_HISTORY = R"(Version 0.6.2
 
+- RDP connections now require a username and password before connecting, instead of failing at logon
 - Fixed the main toolbar and the activity bar swapping places on launch
 - Remote Files now works in WSL sessions, browsing the distribution through its Windows share
 - Fixed the Multi-Exec opt-out checkbox never appearing on session tabs
