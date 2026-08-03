@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QProcess>
+#include <QPushButton>
 #include <QResizeEvent>
 #include <QShowEvent>
 #include <QTimer>
@@ -111,6 +112,19 @@ bool RdpPane::promptForCredentials()
     form->addRow(btns);
     connect(btns, &QDialogButtonBox::accepted, &credDlg, &QDialog::accept);
     connect(btns, &QDialogButtonBox::rejected, &credDlg, &QDialog::reject);
+
+    // The control reports a missing credential only after a failed logon round
+    // trip, so require both up front rather than connecting to be refused.
+    // A bare "DOMAIN\" leaves no user name and is rejected the same way.
+    QPushButton *okBtn = btns->button(QDialogButtonBox::Ok);
+    auto updateOkState = [okBtn, userEdit, passEdit]() {
+        const QString user = userEdit->text().trimmed();
+        const bool haveUser = !user.isEmpty() && !user.endsWith('\\');
+        okBtn->setEnabled(haveUser && !passEdit->text().isEmpty());
+    };
+    connect(userEdit, &QLineEdit::textChanged, &credDlg, updateOkState);
+    connect(passEdit, &QLineEdit::textChanged, &credDlg, updateOkState);
+    updateOkState();
 
     if (credDlg.exec() != QDialog::Accepted) return false;
 
@@ -229,6 +243,14 @@ void RdpPane::connectToHost()
 
     if (m_cachedPass.isEmpty() && !promptForCredentials()) {
         showStatus("Connection cancelled.");
+        return;
+    }
+
+    // Covers credentials that arrived with a saved session rather than through
+    // the prompt: fail here instead of handing the control an incomplete logon.
+    if (m_user.isEmpty() || m_cachedPass.isEmpty()) {
+        m_cachedPass.clear();
+        showStatus("A username and password are both required for an RDP connection.");
         return;
     }
 
