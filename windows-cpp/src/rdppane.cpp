@@ -100,11 +100,21 @@ void RdpPane::showStatus(const QString &text)
 // ---------------------------------------------------------------------------
 // Credentials
 // ---------------------------------------------------------------------------
-bool RdpPane::promptForCredentials()
+bool RdpPane::promptForCredentials(const QString &notice)
 {
     QDialog credDlg(this);
-    credDlg.setWindowTitle(QString("Connect to %1").arg(m_host));
+    credDlg.setWindowTitle(notice.isEmpty() ? QString("Connect to %1").arg(m_host)
+                                            : QString("Sign in to %1").arg(m_host));
     auto *form = new QFormLayout(&credDlg);
+
+    // Spans both columns so the reason for the re-prompt sits above the fields
+    // rather than beside one of them.
+    if (!notice.isEmpty()) {
+        auto *noticeLabel = new QLabel(notice, &credDlg);
+        noticeLabel->setObjectName("errorNote");
+        noticeLabel->setWordWrap(true);
+        form->addRow(noticeLabel);
+    }
 
     QString shownUser = m_domain.isEmpty() ? m_user
                                            : QString("%1\\%2").arg(m_domain, m_user);
@@ -404,7 +414,7 @@ QString RdpPane::credentialsRefusedText() const
 void RdpPane::retryAfterCredentialFailure()
 {
     destroyControl();
-    if (!promptForCredentials()) {
+    if (!promptForCredentials(credentialsRefusedText() + " Try again:")) {
         showStatus(credentialsRefusedText());
         return;
     }

@@ -22,6 +22,7 @@ struct ThemeColors {
     QString ITEM_HOVER_BG;
     QString SCROLLBAR_HANDLE;
     QString SCROLLBAR_HANDLE_HOVER;
+    QString ERROR_TEXT;
 };
 
 QString getStylesheet(const QString &name);
