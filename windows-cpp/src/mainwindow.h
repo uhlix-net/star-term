@@ -70,6 +70,7 @@ private:
     void runMacro(const QString &commands, bool autoExecute);
     void populateMultiExecGrid();
     void populateTabs();
+    void syncPaneOrder();
     void resizeForMultiExec();
     void startPaneLogging(SessionPane *pane);
     void stopPaneLogging(SessionPane *pane);
