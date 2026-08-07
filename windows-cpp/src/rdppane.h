@@ -54,7 +54,9 @@ private:
     QSize       sessionPixelSize() const;
     QString     disconnectText(int discReason);
     QString     credentialsRefusedText() const;
-    bool        promptForCredentials();
+    // `notice` is shown above the fields; non-empty when re-asking after the
+    // server turned the previous credentials down.
+    bool        promptForCredentials(const QString &notice = QString());
     void        showStatus(const QString &text);
     void        startStatsPolling();
     void        stopStatsPolling();

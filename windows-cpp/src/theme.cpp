@@ -30,6 +30,7 @@ static ThemeColors DARK_COLORS = {
     "#101827",  // ITEM_HOVER_BG
     "#1c2e4a",  // SCROLLBAR_HANDLE
     "#2a4060",  // SCROLLBAR_HANDLE_HOVER
+    "#ff6b7a",  // ERROR_TEXT    -- warm red, legible on the navy background
 };
 
 static ThemeColors LIGHT_COLORS = {
@@ -50,6 +51,7 @@ static ThemeColors LIGHT_COLORS = {
     "#d8eaf8",  // ITEM_HOVER_BG
     "#b0c4dc",  // SCROLLBAR_HANDLE
     "#007a99",  // SCROLLBAR_HANDLE_HOVER
+    "#b3202f",  // ERROR_TEXT    -- red darkened for contrast on white
 };
 
 // -----------------------------------------------------------------------
@@ -237,6 +239,9 @@ QLabel#mutedNote {
     color: %6;
     font-size: 9pt;
 }
+QLabel#errorNote {
+    color: %19;
+}
 QCheckBox {
     spacing: 6px;
 }
@@ -351,7 +356,8 @@ QSplitter::handle {
         .arg(c.ITEM_HOVER_BG)       // %15
         .arg(arrowPath)             // %16
         .arg(c.SCROLLBAR_HANDLE)    // %17
-        .arg(c.SCROLLBAR_HANDLE_HOVER); // %18
+        .arg(c.SCROLLBAR_HANDLE_HOVER) // %18
+        .arg(c.ERROR_TEXT);         // %19
 }
 
 // -----------------------------------------------------------------------
