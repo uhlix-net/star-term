@@ -6,6 +6,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QFileDialog>
 #include <QFont>
 #include <QFontComboBox>
@@ -58,7 +59,11 @@ QWidget *PreferencesDialog::buildGeneralTab(const QString &themeName) {
     m_debugCheck = new QCheckBox("Enable debug logging");
     m_debugCheck->setChecked(settings.value("debug").toBool(false));
 
-    QLabel *debugNote = new QLabel(QString("Log file: %1").arg(debugGetLogPath()));
+    // debugGetLogPath() is a Qt path, with forward slashes, because it is handed
+    // to QFile — only the copy shown here gets the separators Windows users
+    // expect to paste into Explorer.
+    QLabel *debugNote = new QLabel(
+        QString("Log file: %1").arg(QDir::toNativeSeparators(debugGetLogPath())));
     debugNote->setObjectName("mutedNote");
     debugNote->setWordWrap(true);
 

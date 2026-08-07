@@ -68,6 +68,8 @@ static const QString UPDATE_HISTORY = R"(Version 0.7.0
 
 - Session tabs can be dragged into any order, and the order carries over to the Multi-Exec grid
 - Installing an update from within the app now runs the installer silently and relaunches Star Term when it finishes
+- Preferences shows the debug log path with Windows backslashes instead of forward slashes
+- A refused RDP logon is now reported in the tab and re-prompted by Star Term, instead of raising the Windows credential dialog
 
 Version 0.6.2
 

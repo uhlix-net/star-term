@@ -43,6 +43,7 @@ private slots:
     void onAxDisconnected(int discReason);
     void onAxLogonError(int lError);
     void onAxFatalError(int errorCode);
+    void retryAfterCredentialFailure();
     void applyPendingResize();
     void pollStats();
 
@@ -52,6 +53,7 @@ private:
     QAxObject  *advancedSettings();
     QSize       sessionPixelSize() const;
     QString     disconnectText(int discReason);
+    QString     credentialsRefusedText() const;
     bool        promptForCredentials();
     void        showStatus(const QString &text);
     void        startStatsPolling();
@@ -74,4 +76,8 @@ private:
     QString      m_statsPass;
     bool         m_initialized   = false;
     bool         m_userClosing   = false;
+    // Whether the session ever got past logon, and whether a logon was refused:
+    // together they separate a credential problem from an ordinary disconnect.
+    bool         m_loggedIn      = false;
+    bool         m_logonFailed   = false;
 };
