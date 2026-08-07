@@ -53,10 +53,10 @@ private:
     QAxObject  *advancedSettings();
     QSize       sessionPixelSize() const;
     QString     disconnectText(int discReason);
-    QString     credentialsRefusedText() const;
     // `notice` is shown above the fields; non-empty when re-asking after the
     // server turned the previous credentials down.
     bool        promptForCredentials(const QString &notice = QString());
+    void        scheduleCredentialRetry(const QString &notice);
     void        showStatus(const QString &text);
     void        startStatsPolling();
     void        stopStatsPolling();
@@ -76,10 +76,13 @@ private:
     QString      m_statsHost;
     QString      m_statsUser;
     QString      m_statsPass;
+    // What the control said about the failed attempt, shown on the re-prompt.
+    QString      m_retryNotice;
     bool         m_initialized   = false;
     bool         m_userClosing   = false;
     // Whether the session ever got past logon, and whether a logon was refused:
     // together they separate a credential problem from an ordinary disconnect.
     bool         m_loggedIn      = false;
     bool         m_logonFailed   = false;
+    bool         m_retryPending  = false;
 };
