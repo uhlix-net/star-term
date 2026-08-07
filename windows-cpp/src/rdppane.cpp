@@ -1,6 +1,7 @@
 #include "rdppane.h"
 #include "config.h"
 #include "debug.h"
+#include "rdpcredprompt.h"
 
 #include <QAxObject>
 #include <QAxWidget>
@@ -14,6 +15,7 @@
 #include <QResizeEvent>
 #include <QShowEvent>
 #include <QTimer>
+#include <QUuid>
 #include <QVBoxLayout>
 
 #ifdef Q_OS_WIN
@@ -276,11 +278,16 @@ void RdpPane::connectToHost()
 
     const QSize px = sessionPixelSize();
 
-    // Suppress the control's own credential dialog: a refused logon comes back
-    // through OnDisconnected and is re-prompted with our dialog instead, so the
-    // whole exchange stays inside the app.  The property arrived with
-    // MsRdpClient7; on anything older ActiveQt just records it and moves on.
-    m_ax->setProperty("AllowPromptingForCredentials", false);
+    // Suppress the control's own credential dialog so a refused logon comes back
+    // through OnDisconnected and is re-prompted with our dialog instead.  This
+    // has to go through COM: the switch is on an IUnknown-derived interface that
+    // ActiveQt does not expose (see rdpcredprompt.h).
+    void *unknown = nullptr;
+    m_ax->queryInterface(QUuid(IID_IUnknown), &unknown);
+    IUnknown *controlUnknown = static_cast<IUnknown *>(unknown);
+    if (!rdpDisableCredentialPrompt(controlUnknown))
+        debugLog("RDP: could not turn off the control's credential prompt");
+    if (controlUnknown) controlUnknown->Release();
 
     m_ax->setProperty("Server",        m_host);
     m_ax->setProperty("UserName",      m_user);
