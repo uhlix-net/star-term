@@ -34,6 +34,7 @@ set(SOURCES
     src/statsworker.cpp
     src/updatechecker.cpp
     src/rdppane.cpp
+    src/rdpcredprompt.cpp
     src/sessionpane.cpp
     src/sidebar.cpp
     src/remotebrowser.cpp
@@ -61,6 +62,7 @@ set(HEADERS
     src/statsworker.h
     src/updatechecker.h
     src/rdppane.h
+    src/rdpcredprompt.h
     src/sessionpane.h
     src/sidebar.h
     src/remotebrowser.h
