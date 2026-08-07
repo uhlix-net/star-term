@@ -53,6 +53,7 @@ private:
     QAxObject  *advancedSettings();
     QSize       sessionPixelSize() const;
     QString     disconnectText(int discReason);
+    QString     connectFailureText(int discReason, uint extended);
     // `notice` is shown above the fields; non-empty when re-asking after the
     // server turned the previous credentials down.
     bool        promptForCredentials(const QString &notice = QString());
