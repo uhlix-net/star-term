@@ -1,6 +1,6 @@
 !define APPNAME "star_term"
 !define DISPLAYNAME "Star Term"
-!define VERSION "0.6.2"
+!define VERSION "0.7.0"
 !define PUBLISHER "uhlix.net"
 ; Use a C++-specific key so we don't collide with the Python edition's "star_term" entry
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\StarTermCpp"
@@ -55,9 +55,11 @@ Function .onInit
     StrCmp $0 "0" not_running
 
   app_running:
+    ; /SD IDYES: a silent install is the in-app updater, which already asked the
+    ; user and is itself the running copy — prompting there would hang unseen.
     MessageBox MB_YESNO|MB_ICONQUESTION \
       "Star Term is currently running.$\n$\nThe installer must close it before continuing.$\n$\nClose Star Term now?" \
-      IDYES close_app IDNO abort_install
+      /SD IDYES IDYES close_app IDNO abort_install
 
   close_app:
     ; taskkill without /F posts WM_CLOSE, so the app shuts down cleanly and
@@ -85,9 +87,19 @@ Function .onInit
   ; If already installed, ask whether to install/update or cancel
   ReadRegStr $R0 HKLM "${UNINSTKEY}" "DisplayVersion"
   StrCmp $R0 "" not_installed
-  MessageBox MB_YESNO|MB_ICONQUESTION "${DISPLAYNAME} version $R0 is already installed.$\n$\nInstall version ${VERSION} now?" IDYES not_installed
+  MessageBox MB_YESNO|MB_ICONQUESTION "${DISPLAYNAME} version $R0 is already installed.$\n$\nInstall version ${VERSION} now?" /SD IDYES IDYES not_installed
   Abort
   not_installed:
+FunctionEnd
+
+; Installing from within the app runs us silently, and the app has exited to let
+; us overwrite it — so bring the new build back up when we are done. Launching
+; through explorer.exe hands the process to the shell, which runs it at the
+; user's own integrity level instead of inheriting the installer's admin token.
+Function .onInstSuccess
+  ${If} ${Silent}
+    Exec '"$WINDIR\explorer.exe" "$INSTDIR\star_term.exe"'
+  ${EndIf}
 FunctionEnd
 
 Section "Application" SecApp

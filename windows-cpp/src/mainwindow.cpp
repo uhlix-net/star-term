@@ -39,6 +39,7 @@
 #include <QSize>
 #include <QSplitter>
 #include <QStackedWidget>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QToolBar>
 #include <QVBoxLayout>
@@ -61,9 +62,14 @@
 #include <QTimer>
 #include <QUrl>
 
-static const QString APP_VERSION = "0.6.2";
+static const QString APP_VERSION = "0.7.0";
 
-static const QString UPDATE_HISTORY = R"(Version 0.6.2
+static const QString UPDATE_HISTORY = R"(Version 0.7.0
+
+- Session tabs can be dragged into any order, and the order carries over to the Multi-Exec grid
+- Installing an update from within the app now runs the installer silently and relaunches Star Term when it finishes
+
+Version 0.6.2
 
 - RDP connections now require a username and password before connecting, instead of failing at logon
 - RDP credential prompt starts in the password field when the session already supplies a username
@@ -184,8 +190,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     // --- Tab view ---
     m_tabs = new QTabWidget;
     m_tabs->setTabsClosable(true);
+    m_tabs->setMovable(true);
     connect(m_tabs, &QTabWidget::tabCloseRequested, this, &MainWindow::onTabCloseRequested);
     connect(m_tabs, &QTabWidget::currentChanged,    this, &MainWindow::onTabChanged);
+    // A drag only moves the tab; m_panes is what Multi-Exec lays out and what
+    // populateTabs() rebuilds from, so it has to follow or the next view switch
+    // would undo the drag.
+    connect(m_tabs->tabBar(), &QTabBar::tabMoved, this, &MainWindow::syncPaneOrder);
 
     // --- Multi-exec grid ---
     m_multiexecContainer = new QWidget;
@@ -558,6 +569,20 @@ void MainWindow::populateTabs() {
         m_multiexecLayout->takeAt(0);
     for (SessionPane *pane : m_panes)
         m_tabs->addTab(pane, pane->name);
+}
+
+// Rewrites m_panes in the order the tabs now sit in, so a dragged tab keeps its
+// place everywhere else the list is used.
+void MainWindow::syncPaneOrder() {
+    QList<SessionPane*> ordered;
+    for (int i = 0; i < m_tabs->count(); ++i)
+        if (SessionPane *pane = qobject_cast<SessionPane*>(m_tabs->widget(i)))
+            ordered.append(pane);
+    // Anything not currently a tab keeps its relative order at the end rather
+    // than being dropped from the list.
+    for (SessionPane *pane : m_panes)
+        if (!ordered.contains(pane)) ordered.append(pane);
+    m_panes = ordered;
 }
 
 void MainWindow::onDataToSend(SessionPane *pane, const QByteArray &data) {
@@ -1215,7 +1240,10 @@ void MainWindow::downloadAndInstall(const QString &url) {
         }
         f.close();
         reply->deleteLater();
-        QProcess::startDetached(path, {});
+        // /S installs without any of the wizard pages (UAC still prompts) and
+        // makes the installer relaunch Star Term once it is done, so an update
+        // started from here comes back up on its own.
+        QProcess::startDetached(path, {"/S"});
         QApplication::quit();
     });
 }
