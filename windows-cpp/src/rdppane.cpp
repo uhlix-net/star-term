@@ -43,6 +43,11 @@ static const int RDP_PROGID_OLDEST = 2;
 static const int MIN_SESSION_W = 640;
 static const int MIN_SESSION_H = 480;
 
+// exDiscReasonRdpEncInvalidCredentials from the MSTSCLib type library: the
+// server rejected the credentials.  NLA settles authentication before winlogon
+// ever runs, so a bad password arrives here rather than through OnLogonError.
+static const uint EX_DISC_INVALID_CREDENTIALS = 768;
+
 // ---------------------------------------------------------------------------
 
 RdpPane::RdpPane(const QJsonObject &session, QWidget *parent)
@@ -245,6 +250,8 @@ void RdpPane::destroyControl()
 void RdpPane::connectToHost()
 {
     m_userClosing = false;
+    m_loggedIn    = false;
+    m_logonFailed = false;
 
     if (m_cachedPass.isEmpty() && !promptForCredentials()) {
         showStatus("Connection cancelled.");
@@ -268,6 +275,12 @@ void RdpPane::connectToHost()
     }
 
     const QSize px = sessionPixelSize();
+
+    // Suppress the control's own credential dialog: a refused logon comes back
+    // through OnDisconnected and is re-prompted with our dialog instead, so the
+    // whole exchange stays inside the app.  The property arrived with
+    // MsRdpClient7; on anything older ActiveQt just records it and moves on.
+    m_ax->setProperty("AllowPromptingForCredentials", false);
 
     m_ax->setProperty("Server",        m_host);
     m_ax->setProperty("UserName",      m_user);
@@ -313,6 +326,7 @@ void RdpPane::onAxConnected()
 void RdpPane::onAxLoginComplete()
 {
     m_status->hide();
+    m_loggedIn = true;
 
     // Stats polling reuses the session credentials for remote WMI.
     m_statsHost = m_host;
@@ -324,11 +338,11 @@ void RdpPane::onAxLoginComplete()
 
 void RdpPane::onAxLogonError(int lError)
 {
-    // -1 bad password, -3 other logon failure.  Drop the cached password so the
-    // next connect attempt re-prompts instead of silently failing again.
-    if (lError == -1 || lError == -3)
-        m_cachedPass.clear();
     debugLog(QString("RDP: logon error %1").arg(lError));
+    // Negative codes are refusals; the non-negative ones are winlogon progress
+    // notices. Record the refusal and let the disconnect that follows drive the
+    // re-prompt, rather than acting from inside the control's event dispatch.
+    if (lError < 0) m_logonFailed = true;
 }
 
 QString RdpPane::disconnectText(int discReason)
@@ -349,11 +363,45 @@ void RdpPane::onAxDisconnected(int discReason)
 {
     stopStatsPolling();
     if (m_userClosing) return;
+
+    const uint extended = m_ax ? m_ax->property("ExtendedDisconnectReason").toUInt() : 0;
+    const bool credentialsRejected =
+        m_logonFailed || (!m_loggedIn && extended == EX_DISC_INVALID_CREDENTIALS);
+
     // Hide rather than destroy: we are inside the control's own event dispatch,
     // and releasing the COM object here would re-enter it.  destroyControl()
-    // runs later from reconnect() or disconnectRdp().
+    // runs later from reconnect(), disconnectRdp() or the retry below.
     if (m_ax) m_ax->hide();
+
+    if (credentialsRejected) {
+        m_cachedPass.clear();
+        showStatus(credentialsRefusedText());
+        // Ask again once the dispatch has unwound — a modal dialog opened from
+        // here would run a nested event loop inside the control's callback.
+        QTimer::singleShot(0, this, &RdpPane::retryAfterCredentialFailure);
+        return;
+    }
+
     showStatus(disconnectText(discReason));
+}
+
+QString RdpPane::credentialsRefusedText() const
+{
+    const QString who = m_domain.isEmpty() ? m_user
+                                           : QString("%1\\%2").arg(m_domain, m_user);
+    return QString("%1 refused the credentials for %2.").arg(m_host, who);
+}
+
+// Re-prompts with our own dialog after the server turned the credentials down,
+// so the failure never reaches the control's built-in credential UI.
+void RdpPane::retryAfterCredentialFailure()
+{
+    destroyControl();
+    if (!promptForCredentials()) {
+        showStatus(credentialsRefusedText());
+        return;
+    }
+    connectToHost();
 }
 
 void RdpPane::onAxFatalError(int errorCode)
