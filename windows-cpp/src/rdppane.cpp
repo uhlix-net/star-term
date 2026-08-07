@@ -45,11 +45,6 @@ static const int RDP_PROGID_OLDEST = 2;
 static const int MIN_SESSION_W = 640;
 static const int MIN_SESSION_H = 480;
 
-// exDiscReasonRdpEncInvalidCredentials from the MSTSCLib type library: the
-// server rejected the credentials.  NLA settles authentication before winlogon
-// ever runs, so a bad password arrives here rather than through OnLogonError.
-static const uint EX_DISC_INVALID_CREDENTIALS = 768;
-
 // ---------------------------------------------------------------------------
 
 RdpPane::RdpPane(const QJsonObject &session, QWidget *parent)
@@ -382,40 +377,51 @@ void RdpPane::onAxDisconnected(int discReason)
     if (m_userClosing) return;
 
     const uint extended = m_ax ? m_ax->property("ExtendedDisconnectReason").toUInt() : 0;
-    const bool credentialsRejected =
-        m_logonFailed || (!m_loggedIn && extended == EX_DISC_INVALID_CREDENTIALS);
+    const QString detail = disconnectText(discReason);
+    debugLog(QString("RDP: disconnected reason=%1 extended=%2 loggedIn=%3 logonError=%4 (%5)")
+                 .arg(discReason).arg(extended)
+                 .arg(m_loggedIn).arg(m_logonFailed).arg(detail));
 
     // Hide rather than destroy: we are inside the control's own event dispatch,
     // and releasing the COM object here would re-enter it.  destroyControl()
     // runs later from reconnect(), disconnectRdp() or the retry below.
     if (m_ax) m_ax->hide();
 
-    if (credentialsRejected) {
-        m_cachedPass.clear();
-        showStatus(credentialsRefusedText());
-        // Ask again once the dispatch has unwound — a modal dialog opened from
-        // here would run a nested event loop inside the control's callback.
-        QTimer::singleShot(0, this, &RdpPane::retryAfterCredentialFailure);
-        return;
+    showStatus(detail);
+
+    // A session that never reached logon leaves the credentials as the one thing
+    // the user can still change, so offer them again rather than leaving a dead
+    // tab.  The trigger is deliberately "did not log in" rather than a specific
+    // disconnect code: the code a refused logon produces varies with the
+    // server's security layer, and missing it strands the session.  The notice
+    // is the control's own description, so it stays truthful when the real cause
+    // was something other than the password.
+    if (!m_loggedIn) {
+        // Deferred: a modal dialog opened from here would run a nested event
+        // loop inside the control's own callback.
+        scheduleCredentialRetry(detail);
     }
-
-    showStatus(disconnectText(discReason));
 }
 
-QString RdpPane::credentialsRefusedText() const
+// A failed attempt can raise both OnDisconnected and OnFatalError; the flag
+// keeps that from queueing the dialog twice.
+void RdpPane::scheduleCredentialRetry(const QString &notice)
 {
-    const QString who = m_domain.isEmpty() ? m_user
-                                           : QString("%1\\%2").arg(m_domain, m_user);
-    return QString("%1 refused the credentials for %2.").arg(m_host, who);
+    if (m_retryPending) return;
+    m_retryPending = true;
+    m_cachedPass.clear();
+    m_retryNotice = notice;
+    QTimer::singleShot(0, this, &RdpPane::retryAfterCredentialFailure);
 }
 
-// Re-prompts with our own dialog after the server turned the credentials down,
-// so the failure never reaches the control's built-in credential UI.
+// Puts the credentials back in front of the user after a connection attempt
+// failed, so the failure never reaches the control's built-in credential UI.
 void RdpPane::retryAfterCredentialFailure()
 {
+    m_retryPending = false;
     destroyControl();
-    if (!promptForCredentials(credentialsRefusedText() + " Try again:")) {
-        showStatus(credentialsRefusedText());
+    if (!promptForCredentials(m_retryNotice)) {
+        showStatus(m_retryNotice);
         return;
     }
     connectToHost();
@@ -424,11 +430,17 @@ void RdpPane::retryAfterCredentialFailure()
 void RdpPane::onAxFatalError(int errorCode)
 {
     stopStatsPolling();
-    debugLog(QString("RDP: fatal error %1").arg(errorCode));
+    debugLog(QString("RDP: fatal error %1 loggedIn=%2").arg(errorCode).arg(m_loggedIn));
     if (m_userClosing) return;
     if (m_ax) m_ax->hide();
-    showStatus(QString("Remote Desktop error %1 on %2.")
-                   .arg(errorCode).arg(m_host));
+
+    const QString detail = QString("Remote Desktop error %1 on %2.")
+                               .arg(errorCode).arg(m_host);
+    showStatus(detail);
+
+    // Same reasoning as onAxDisconnected: an attempt that never logged in is
+    // worth offering again rather than leaving the tab dead.
+    if (!m_loggedIn) scheduleCredentialRetry(detail);
 }
 
 bool RdpPane::focusNextPrevChild(bool)
