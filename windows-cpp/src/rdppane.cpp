@@ -45,27 +45,6 @@ static const int RDP_PROGID_OLDEST = 2;
 static const int MIN_SESSION_W = 640;
 static const int MIN_SESSION_H = 480;
 
-// Plain wording for the ExtendedDisconnectReasonCode values that say something
-// about why a sign-in did not go through.  The codes and their names come from
-// the MSTSCLib type library; the sentences are a paraphrase of those names.
-// Returns empty for anything else, including 0 (exDiscReasonNoInfo), which is
-// what the control reports when it has nothing to add.
-static QString extendedReasonText(uint extended)
-{
-    switch (extended) {
-    case 4:   return "The server timed out waiting for the sign-in to finish.";
-    case 5:   return "Another connection took over the session.";
-    case 7:   return "The server refused the connection.";
-    case 8:   return "The server refused the connection under its FIPS encryption policy.";
-    case 9:   return "This account is not allowed to sign in to that computer remotely.";
-    case 10:  return "The server will not accept these credentials and wants new ones.";
-    case 258: return "No Remote Desktop licence was available.";
-    case 266: return "The server is not accepting remote connections.";
-    case 768: return "The username or password is incorrect.";
-    default:  return {};
-    }
-}
-
 // ---------------------------------------------------------------------------
 
 RdpPane::RdpPane(const QJsonObject &session, QWidget *parent)
@@ -392,30 +371,14 @@ QString RdpPane::disconnectText(int discReason)
     return QString("Disconnected from %1: %2").arg(m_host, detail);
 }
 
-// Wording for an attempt that never reached the desktop.  Prefers the type
-// library's account of the extended reason, falls back to the control's own
-// description, and says something useful even when both come up empty — which
-// they often do, since GetErrorDescription has no text for most reasons.  The
-// raw codes ride along so an unexplained failure can still be looked up.
-QString RdpPane::connectFailureText(int discReason, uint extended)
+// An attempt that never reached the desktop.  The control's own account of the
+// failure is usually empty and the codes mean nothing to the user, so the
+// message says the one thing that matters; debug.log keeps the numbers.
+QString RdpPane::connectFailureText() const
 {
     const QString who = m_domain.isEmpty() ? m_user
                                            : QString("%1\\%2").arg(m_domain, m_user);
-
-    QString why = extendedReasonText(extended);
-    if (why.isEmpty() && m_ax) {
-        why = m_ax->dynamicCall("GetErrorDescription(uint,uint)",
-                                uint(discReason), extended).toString().trimmed();
-    }
-    if (why.isEmpty()) {
-        why = "The server ended the connection before the sign-in finished, "
-              "without saying why. An incorrect username or password is the "
-              "usual cause.";
-    }
-
-    return QString("Could not sign in to %1 as %2.\n\n%3\n\n"
-                   "(disconnect code %4, extended %5)")
-        .arg(m_host, who, why).arg(discReason).arg(extended);
+    return QString("Could not sign in to %1 as %2.").arg(m_host, who);
 }
 
 void RdpPane::onAxDisconnected(int discReason)
@@ -440,7 +403,7 @@ void RdpPane::onAxDisconnected(int discReason)
     // disconnect code: the code a refused logon produces varies with the
     // server's security layer, and missing it strands the session.
     if (!m_loggedIn) {
-        const QString failure = connectFailureText(discReason, extended);
+        const QString failure = connectFailureText();
         showStatus(failure);
         // Deferred: a modal dialog opened from here would run a nested event
         // loop inside the control's own callback.
@@ -485,9 +448,7 @@ void RdpPane::onAxFatalError(int errorCode)
     // Same reasoning as onAxDisconnected: an attempt that never logged in is
     // worth offering again rather than leaving the tab dead.
     if (!m_loggedIn) {
-        const QString failure =
-            QString("Could not sign in to %1.\n\nThe Remote Desktop control "
-                    "failed with error %2.").arg(m_host).arg(errorCode);
+        const QString failure = connectFailureText();
         showStatus(failure);
         scheduleCredentialRetry(failure);
         return;
