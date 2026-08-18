@@ -1,4 +1,5 @@
 #include "licensing.h"
+#include "debug.h"
 #include "config.h"
 
 #include <QByteArray>
@@ -232,6 +233,20 @@ static TrialStatus getTrialStatus() {
     writeTrialMarker(updated);
 
     return { clockRolledBack ? 0 : daysRemaining, expired };
+}
+
+// -----------------------------------------------------------------------
+// resetTrial — TEMPORARY, pre-1.0. See the note in licensing.h.
+// -----------------------------------------------------------------------
+void resetTrial() {
+    const QString today = QDate::currentDate().toString(Qt::ISODate);
+    TrialMarker m;
+    m.trialStart = today;
+    // lastSeen is reset too, otherwise a clock that had been rolled back would
+    // still read as tampered and the trial would come back up expired.
+    m.lastSeen   = today;
+    writeTrialMarker(m);
+    debugLog(QString("Trial reset: 30-day period restarted from %1").arg(today));
 }
 
 // -----------------------------------------------------------------------

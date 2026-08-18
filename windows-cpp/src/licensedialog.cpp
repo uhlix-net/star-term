@@ -6,6 +6,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QFrame>
+#include <QMessageBox>
 #include <QVBoxLayout>
 
 // -----------------------------------------------------------------------
@@ -132,11 +134,41 @@ LicenseGateDialog::LicenseGateDialog(QWidget *parent) : QDialog(parent) {
     LicenseStatusWidget *sw = new LicenseStatusWidget;
     connect(sw, &LicenseStatusWidget::activated, this, &QDialog::accept);
 
+    // --- TEMPORARY, pre-1.0: trial re-arm. Remove with resetTrial(). ---
+    QFrame *sep = new QFrame;
+    sep->setFrameShape(QFrame::HLine);
+
+    QPushButton *resetBtn = new QPushButton(
+        QString("Reset the %1-Day Trial").arg(TRIAL_DAYS));
+    connect(resetBtn, &QPushButton::clicked, this, [this] {
+        if (QMessageBox::question(
+                this, "Reset Trial",
+                QString("Restart the %1-day trial from today?\n\n%2")
+                    .arg(TRIAL_DAYS).arg(TRIAL_REARM_NOTICE),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+            != QMessageBox::Yes) {
+            return;
+        }
+        resetTrial();
+        QMessageBox::information(
+            this, "Trial Reset",
+            QString("The trial has been restarted. You have %1 days.").arg(TRIAL_DAYS));
+        accept();          // let startup continue into the app
+    });
+
+    QLabel *resetNote = new QLabel(TRIAL_REARM_NOTICE);
+    resetNote->setWordWrap(true);
+    resetNote->setStyleSheet("color: #8a8a8a;");
+    // --- end temporary block ---
+
     QPushButton *exitBtn = new QPushButton("Exit");
     connect(exitBtn, &QPushButton::clicked, this, &QDialog::reject);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->addWidget(intro);
     layout->addWidget(sw);
+    layout->addWidget(sep);
+    layout->addWidget(resetBtn);
+    layout->addWidget(resetNote);
     layout->addWidget(exitBtn);
 }
