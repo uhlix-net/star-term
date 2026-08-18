@@ -13,6 +13,7 @@
 class QLabel;
 class QLineEdit;
 class QMutex;
+class QCheckBox;
 class QPushButton;
 class QToolButton;
 class QVBoxLayout;
@@ -210,7 +211,7 @@ private:
     QLineEdit      *m_pathEdit      = nullptr;
     RemoteFileList *m_listWidget    = nullptr;
     QLabel         *m_statusLabel   = nullptr;
-    QPushButton    *m_followBtn     = nullptr;
+    QCheckBox      *m_followBox     = nullptr;
 
     // One row per queued file, in download order. A QListWidget with a painting
     // delegate rather than stacked child widgets: the list owns row geometry and

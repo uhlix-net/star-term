@@ -20,6 +20,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QCheckBox>
 #include <QMenu>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -669,12 +670,15 @@ RemoteFileBrowser::RemoteFileBrowser(QWidget *parent) : QWidget(parent) {
     m_statusLabel = new QLabel;
     m_statusLabel->setStyleSheet("color: #8a8a8a;");
 
-    m_followBtn = new QPushButton("Follow Current Directory");
-    m_followBtn->setCheckable(true);
-    m_followBtn->setChecked(true);
+    // A checkbox rather than a toggle button: as a button its on/off state was
+    // only conveyed by colour, which is ambiguous unless you already know which
+    // colour means what. A tick reads the same to everyone.
+    m_followBox = new QCheckBox("Follow Current Directory");
+    m_followBox->setChecked(true);
+    m_followBox->setToolTip("Follow the session's working directory as it changes");
     // Catch up straight away rather than waiting for the next cd — the session
     // has usually moved elsewhere while following was off.
-    connect(m_followBtn, &QPushButton::toggled, this, [this](bool on) {
+    connect(m_followBox, &QCheckBox::toggled, this, [this](bool on) {
         if (!on || !m_pane || !m_pane->cwdTracker) return;
         const QString cwd = m_pane->cwdTracker->cwd();
         if (!cwd.isEmpty() && cwd != m_currentPath) setPath(cwd);
@@ -709,7 +713,7 @@ RemoteFileBrowser::RemoteFileBrowser(QWidget *parent) : QWidget(parent) {
     layout->addWidget(pathRow);
     layout->addWidget(m_listWidget, 1);
     layout->addWidget(m_statusLabel);
-    layout->addWidget(m_followBtn);
+    layout->addWidget(m_followBox);
     layout->addWidget(m_progressList);
     layout->addWidget(m_cancelBtn);
 
@@ -907,7 +911,7 @@ void RemoteFileBrowser::goUp() {
 }
 
 void RemoteFileBrowser::onCwdChanged(const QString &path) {
-    if (m_followBtn->isChecked()) setPath(path);
+    if (m_followBox->isChecked()) setPath(path);
 }
 
 // The menu offers only what the click actually applies to: a file can be
