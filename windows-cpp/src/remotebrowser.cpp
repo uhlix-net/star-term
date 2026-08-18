@@ -518,22 +518,22 @@ RemoteFileBrowser::RemoteFileBrowser(QWidget *parent) : QWidget(parent) {
 
     // One progress row per queued file. Held in a scroll area with a capped
     // height so downloading many files scrolls instead of squeezing the list.
-    m_progressPanel  = new QWidget;
-    m_progressLayout = new QVBoxLayout(m_progressPanel);
-    m_progressLayout->setContentsMargins(0,0,0,0);
-    m_progressLayout->setSpacing(4);
-
     m_progressArea = new QScrollArea;
-    m_progressArea->setWidget(m_progressPanel);
     m_progressArea->setWidgetResizable(true);
     m_progressArea->setFrameShape(QFrame::NoFrame);
     m_progressArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // Floor as well as ceiling: the file list takes all the stretch, so without
+    // a minimum the area can be squeezed to a sliver in a short window.
+    m_progressArea->setMinimumHeight(64);
     m_progressArea->setMaximumHeight(160);
-    m_progressArea->setVisible(false);
 
     m_cancelBtn = new QPushButton("Stop Download");
     m_cancelBtn->setVisible(false);
     connect(m_cancelBtn, &QPushButton::clicked, this, &RemoteFileBrowser::cancelDownloads);
+
+    // Installs the initial empty panel, so construction and reset take exactly
+    // the same path and cannot drift apart.
+    clearProgressRows();
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(8,8,8,8);
@@ -825,15 +825,27 @@ void RemoteFileBrowser::buildProgressRows(const QList<QPair<QString,QString>> &p
         QLabel *name = new QLabel(pair.first, m_progressPanel);
         name->setStyleSheet("color: #8a8a8a;");
         name->setToolTip(pair.second);       // full destination path
+        // The browser lives in a narrow side panel. Let the label shrink below
+        // its text width — otherwise a long filename forces the panel wider than
+        // the viewport and, with the horizontal bar off, the rest is clipped.
+        name->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        name->setFixedHeight(name->fontMetrics().height());
+
         QProgressBar *bar = new QProgressBar(m_progressPanel);
         bar->setRange(0, 100);
         bar->setValue(0);
         bar->setTextVisible(true);
         bar->setFormat("Queued");
+        // Pin the height so a cramped panel cannot collapse the groove into a
+        // hairline with its percentage spilling outside.
+        bar->setFixedHeight(18);
+        bar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+
         m_progressLayout->addWidget(name);
         m_progressLayout->addWidget(bar);
         m_progressBars.append(bar);
     }
+    m_progressLayout->addStretch(1);   // keep rows packed at the top
     m_progressArea->setVisible(!m_progressBars.isEmpty());
     m_cancelBtn->setEnabled(true);
     m_cancelBtn->setVisible(!m_progressBars.isEmpty());
@@ -859,21 +871,29 @@ void RemoteFileBrowser::cancelDownloads() {
 
 void RemoteFileBrowser::clearProgressRows() {
     m_progressBars.clear();
-    if (!m_progressLayout) return;
-    while (QLayoutItem *item = m_progressLayout->takeAt(0)) {
-        if (QWidget *w = item->widget()) {
-            // takeAt() only detaches from the layout — the widget stays a child of
-            // the panel, keeps its old geometry and stays visible. deleteLater()
-            // alone therefore leaves the previous batch's rows on screen until the
-            // event loop runs, and the next batch draws straight over them.
-            // Reparenting hides it immediately; deletion can still be deferred.
-            w->setParent(nullptr);
-            w->deleteLater();
-        }
-        delete item;
+    if (!m_progressArea) return;
+
+    // Swap in a brand-new panel rather than removing rows one at a time. Taking
+    // children out of the layout individually left the previous batch's widgets
+    // parented to the panel and still visible; replacing the whole container
+    // cannot leave anything behind.
+    if (QWidget *old = m_progressArea->takeWidget()) {
+        old->hide();
+        old->deleteLater();
     }
-    if (m_progressArea) m_progressArea->setVisible(false);
-    if (m_cancelBtn)    m_cancelBtn->setVisible(false);
+
+    m_progressPanel  = new QWidget;
+    m_progressLayout = new QVBoxLayout(m_progressPanel);
+    m_progressLayout->setContentsMargins(0,0,0,0);
+    m_progressLayout->setSpacing(2);
+    // Without this the scroll area shrinks the panel to the viewport and the
+    // rows are compressed past their natural height until they overlap. Holding
+    // the panel at its minimum makes the area scroll instead of squashing.
+    m_progressLayout->setSizeConstraint(QLayout::SetMinimumSize);
+
+    m_progressArea->setWidget(m_progressPanel);
+    m_progressArea->setVisible(false);
+    if (m_cancelBtn) m_cancelBtn->setVisible(false);
 }
 
 void RemoteFileBrowser::onUploadRequested(const QStringList &localPaths) {
