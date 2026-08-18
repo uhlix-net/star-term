@@ -14,10 +14,15 @@ class QLineEdit;
 class QMutex;
 class QPushButton;
 class QToolButton;
-class QProgressBar;
-class QScrollArea;
 class QVBoxLayout;
+class QListWidgetItem;
 class SessionPane;
+
+// Item data roles for the download progress rows.
+enum DownloadRole {
+    DownloadPercentRole = Qt::UserRole + 100,   // int 0..100
+    DownloadStatusRole  = Qt::UserRole + 101    // text drawn inside the bar
+};
 
 // -----------------------------------------------------------------------
 // CwdTracker — infers remote cwd from typed cd commands (matches Python)
@@ -169,6 +174,7 @@ private:
     // Per-file download progress rows.
     void buildProgressRows(const QList<QPair<QString,QString>> &pairs);
     void clearProgressRows();
+    void setRowState(int index, int percent, const QString &status);
     void cancelDownloads();
 
     // A WSL distribution is browsed through its Windows share instead of SFTP:
@@ -191,13 +197,12 @@ private:
     QLabel         *m_statusLabel   = nullptr;
     QPushButton    *m_followBtn     = nullptr;
 
-    // One labelled progress row per queued file, scrollable so a large queue
-    // cannot grow the panel without bound. Index matches download order.
-    QScrollArea         *m_progressArea   = nullptr;
-    QWidget             *m_progressPanel  = nullptr;
-    QVBoxLayout         *m_progressLayout = nullptr;
-    QList<QProgressBar*> m_progressBars;
-    QPushButton         *m_cancelBtn      = nullptr;
+    // One row per queued file, in download order. A QListWidget with a painting
+    // delegate rather than stacked child widgets: the list owns row geometry and
+    // scrolling, so rows cannot be compressed onto each other.
+    QListWidget              *m_progressList = nullptr;
+    QList<QListWidgetItem*>   m_progressItems;
+    QPushButton              *m_cancelBtn    = nullptr;
 
     // The download currently in flight, so it can be cancelled. Cleared when
     // the transfer ends by any route.

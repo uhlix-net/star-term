@@ -10,10 +10,14 @@
 #include <QDragMoveEvent>
 #include <QDropEvent>
 #include <QFile>
+#include <QApplication>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QFrame>
 #include <QHBoxLayout>
+#include <QPainter>
+#include <QStyle>
+#include <QStyleOptionProgressBar>
+#include <QStyledItemDelegate>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -21,9 +25,7 @@
 #include <QMimeData>
 #include <QMutex>
 #include <QMutexLocker>
-#include <QProgressBar>
 #include <QPushButton>
-#include <QScrollArea>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QToolButton>
@@ -161,6 +163,69 @@ SFTPWorker::SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp, QMutex *ses
     : QThread(parent), m_session(session), m_sftp(sftp), m_sessionLock(sessionLock)
     , m_op(List), m_remotePath(path)
 {}
+
+// -----------------------------------------------------------------------
+// Download progress rows
+//
+// Painted by a delegate rather than built from stacked child widgets. Three
+// earlier attempts using a QVBoxLayout of QLabel/QProgressBar pairs inside a
+// QScrollArea all ended with the rows drawn on top of one another when the
+// panel was short. A delegate paints inside the rect the view hands it, so the
+// view owns geometry and scrolling and overlap cannot happen.
+// -----------------------------------------------------------------------
+namespace {
+
+constexpr int kBarHeight = 16;
+constexpr int kRowPad    = 4;
+
+class DownloadRowDelegate : public QStyledItemDelegate {
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    QSize sizeHint(const QStyleOptionViewItem &option,
+                   const QModelIndex &) const override {
+        return QSize(0, option.fontMetrics.height() + kBarHeight + kRowPad * 3);
+    }
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override {
+        QStyleOptionViewItem opt = option;
+        initStyleOption(&opt, index);
+        QStyle *style = opt.widget ? opt.widget->style() : QApplication::style();
+
+        // Draw the row background only — the text is placed by hand below.
+        opt.text.clear();
+        style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, opt.widget);
+
+        const QRect r       = option.rect.adjusted(kRowPad, kRowPad, -kRowPad, -kRowPad);
+        const int   textH   = option.fontMetrics.height();
+        const QRect textRect(r.left(), r.top(), r.width(), textH);
+
+        // Filename, elided in the middle so the extension stays readable.
+        painter->save();
+        painter->setPen(option.palette.color(QPalette::Text));
+        painter->drawText(
+            textRect, Qt::AlignLeft | Qt::AlignVCenter,
+            option.fontMetrics.elidedText(index.data(Qt::DisplayRole).toString(),
+                                          Qt::ElideMiddle, textRect.width()));
+        painter->restore();
+
+        QStyleOptionProgressBar pb;
+        pb.rect          = QRect(r.left(), textRect.bottom() + kRowPad,
+                                 r.width(), kBarHeight);
+        pb.minimum       = 0;
+        pb.maximum       = 100;
+        pb.progress      = index.data(DownloadPercentRole).toInt();
+        pb.text          = index.data(DownloadStatusRole).toString();
+        pb.textVisible   = !pb.text.isEmpty();
+        pb.textAlignment = Qt::AlignCenter;
+        pb.state         = QStyle::State_Enabled | QStyle::State_Horizontal;
+        pb.palette       = option.palette;
+        style->drawControl(QStyle::CE_ProgressBar, &pb, painter, nullptr);
+    }
+};
+
+} // namespace
 
 // RAII helper: switch to blocking mode for the duration of a locked SFTP call,
 // then restore non-blocking on exit. Always used while m_sessionLock is held.
@@ -518,22 +583,19 @@ RemoteFileBrowser::RemoteFileBrowser(QWidget *parent) : QWidget(parent) {
 
     // One progress row per queued file. Held in a scroll area with a capped
     // height so downloading many files scrolls instead of squeezing the list.
-    m_progressArea = new QScrollArea;
-    m_progressArea->setWidgetResizable(true);
-    m_progressArea->setFrameShape(QFrame::NoFrame);
-    m_progressArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    // Floor as well as ceiling: the file list takes all the stretch, so without
-    // a minimum the area can be squeezed to a sliver in a short window.
-    m_progressArea->setMinimumHeight(64);
-    m_progressArea->setMaximumHeight(160);
+    m_progressList = new QListWidget;
+    m_progressList->setItemDelegate(new DownloadRowDelegate(m_progressList));
+    m_progressList->setSelectionMode(QAbstractItemView::NoSelection);
+    m_progressList->setFocusPolicy(Qt::NoFocus);
+    m_progressList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_progressList->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    m_progressList->setUniformItemSizes(true);
+    m_progressList->setMaximumHeight(160);
+    m_progressList->setVisible(false);
 
     m_cancelBtn = new QPushButton("Stop Download");
     m_cancelBtn->setVisible(false);
     connect(m_cancelBtn, &QPushButton::clicked, this, &RemoteFileBrowser::cancelDownloads);
-
-    // Installs the initial empty panel, so construction and reset take exactly
-    // the same path and cannot drift apart.
-    clearProgressRows();
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(8,8,8,8);
@@ -543,7 +605,7 @@ RemoteFileBrowser::RemoteFileBrowser(QWidget *parent) : QWidget(parent) {
     layout->addWidget(m_listWidget, 1);
     layout->addWidget(m_statusLabel);
     layout->addWidget(m_followBtn);
-    layout->addWidget(m_progressArea);
+    layout->addWidget(m_progressList);
     layout->addWidget(m_cancelBtn);
 
     setEnabled(false);
@@ -822,33 +884,15 @@ void RemoteFileBrowser::onDownloadDialog(const QStringList &names) {
 void RemoteFileBrowser::buildProgressRows(const QList<QPair<QString,QString>> &pairs) {
     clearProgressRows();
     for (const auto &pair : pairs) {
-        QLabel *name = new QLabel(pair.first, m_progressPanel);
-        name->setStyleSheet("color: #8a8a8a;");
-        name->setToolTip(pair.second);       // full destination path
-        // The browser lives in a narrow side panel. Let the label shrink below
-        // its text width — otherwise a long filename forces the panel wider than
-        // the viewport and, with the horizontal bar off, the rest is clipped.
-        name->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        name->setFixedHeight(name->fontMetrics().height());
-
-        QProgressBar *bar = new QProgressBar(m_progressPanel);
-        bar->setRange(0, 100);
-        bar->setValue(0);
-        bar->setTextVisible(true);
-        bar->setFormat("Queued");
-        // Pin the height so a cramped panel cannot collapse the groove into a
-        // hairline with its percentage spilling outside.
-        bar->setFixedHeight(18);
-        bar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-
-        m_progressLayout->addWidget(name);
-        m_progressLayout->addWidget(bar);
-        m_progressBars.append(bar);
+        QListWidgetItem *item = new QListWidgetItem(pair.first, m_progressList);
+        item->setToolTip(pair.second);                  // full destination path
+        item->setData(DownloadPercentRole, 0);
+        item->setData(DownloadStatusRole, QString("Queued"));
+        m_progressItems.append(item);
     }
-    m_progressLayout->addStretch(1);   // keep rows packed at the top
-    m_progressArea->setVisible(!m_progressBars.isEmpty());
+    m_progressList->setVisible(!m_progressItems.isEmpty());
     m_cancelBtn->setEnabled(true);
-    m_cancelBtn->setVisible(!m_progressBars.isEmpty());
+    m_cancelBtn->setVisible(!m_progressItems.isEmpty());
 }
 
 // Stop the queue: drop anything not started, ask the running transfer to abort
@@ -863,37 +907,27 @@ void RemoteFileBrowser::cancelDownloads() {
     }
     // Nothing in flight (fsMode copies are synchronous) — tidy up here instead.
     const int idx = m_downloadIndex - 1;
-    for (int i = idx + 1; i < m_progressBars.size(); ++i)
-        m_progressBars[i]->setFormat("Cancelled");
+    for (int i = idx + 1; i < m_progressItems.size(); ++i)
+        setRowState(i, -1, "Cancelled");
     m_cancelBtn->setVisible(false);
     m_statusLabel->setText("Download stopped");
 }
 
 void RemoteFileBrowser::clearProgressRows() {
-    m_progressBars.clear();
-    if (!m_progressArea) return;
-
-    // Swap in a brand-new panel rather than removing rows one at a time. Taking
-    // children out of the layout individually left the previous batch's widgets
-    // parented to the panel and still visible; replacing the whole container
-    // cannot leave anything behind.
-    if (QWidget *old = m_progressArea->takeWidget()) {
-        old->hide();
-        old->deleteLater();
+    m_progressItems.clear();
+    if (m_progressList) {
+        m_progressList->clear();       // owns and destroys its items
+        m_progressList->setVisible(false);
     }
-
-    m_progressPanel  = new QWidget;
-    m_progressLayout = new QVBoxLayout(m_progressPanel);
-    m_progressLayout->setContentsMargins(0,0,0,0);
-    m_progressLayout->setSpacing(2);
-    // Without this the scroll area shrinks the panel to the viewport and the
-    // rows are compressed past their natural height until they overlap. Holding
-    // the panel at its minimum makes the area scroll instead of squashing.
-    m_progressLayout->setSizeConstraint(QLayout::SetMinimumSize);
-
-    m_progressArea->setWidget(m_progressPanel);
-    m_progressArea->setVisible(false);
     if (m_cancelBtn) m_cancelBtn->setVisible(false);
+}
+
+// Set a row's bar and the text drawn inside it. Percent < 0 leaves it unchanged.
+void RemoteFileBrowser::setRowState(int index, int percent, const QString &status) {
+    if (index < 0 || index >= m_progressItems.size()) return;
+    QListWidgetItem *item = m_progressItems[index];
+    if (percent >= 0) item->setData(DownloadPercentRole, percent);
+    item->setData(DownloadStatusRole, status);
 }
 
 void RemoteFileBrowser::onUploadRequested(const QStringList &localPaths) {
@@ -933,16 +967,12 @@ void RemoteFileBrowser::startNextDownload() {
     QString remotePath = m_currentPath + "/" + name;
     // Row indices are 1-based against m_downloadIndex; mark the finished row
     // complete and light up the one now starting.
-    if (m_downloadIndex >= 2 && m_downloadIndex - 2 < m_progressBars.size()) {
-        QProgressBar *prev = m_progressBars[m_downloadIndex - 2];
-        prev->setValue(100);
-        prev->setFormat("Done");
-    }
-    if (m_downloadIndex - 1 < m_progressBars.size()) {
-        QProgressBar *cur = m_progressBars[m_downloadIndex - 1];
-        cur->setValue(0);
-        cur->setFormat("%p%");
-        m_progressArea->ensureWidgetVisible(cur);
+    if (m_downloadIndex >= 2)
+        setRowState(m_downloadIndex - 2, 100, "Done");
+    const int curRow = m_downloadIndex - 1;
+    if (curRow >= 0 && curRow < m_progressItems.size()) {
+        setRowState(curRow, 0, "0%");
+        m_progressList->scrollToItem(m_progressItems[curRow]);
     }
     if (m_downloadTotal > 1)
         m_statusLabel->setText(QString("Downloading %1 (%2/%3)...").arg(name).arg(m_downloadIndex).arg(m_downloadTotal));
@@ -970,8 +1000,8 @@ void RemoteFileBrowser::startNextDownload() {
 void RemoteFileBrowser::onDownloadProgress(qint64 done, qint64 total) {
     if (total <= 0) return;
     const int idx = m_downloadIndex - 1;
-    if (idx >= 0 && idx < m_progressBars.size())
-        m_progressBars[idx]->setValue(static_cast<int>(done * 100 / total));
+    const int pct = static_cast<int>(done * 100 / total);
+    setRowState(idx, pct, QString("%1%").arg(pct));
 }
 
 void RemoteFileBrowser::onDownloadFinished(const QString&, const QString&) {
@@ -985,8 +1015,8 @@ void RemoteFileBrowser::onDownloadError(const QString &message) {
     // Leave the rows up so it stays visible which file failed; mark the rest
     // abandoned rather than silently vanishing mid-queue.
     const int idx = m_downloadIndex - 1;
-    for (int i = idx; i < m_progressBars.size(); ++i)
-        m_progressBars[i]->setFormat(i == idx ? "Failed" : "Cancelled");
+    for (int i = idx; i < m_progressItems.size(); ++i)
+        setRowState(i, -1, i == idx ? "Failed" : "Cancelled");
     m_cancelBtn->setVisible(false);
     onError(message);
 }
@@ -996,10 +1026,8 @@ void RemoteFileBrowser::onDownloadCancelled(const QString&) {
     m_activeDownload = nullptr;
     m_downloadQueue.clear();
     const int idx = m_downloadIndex - 1;
-    for (int i = idx; i < m_progressBars.size(); ++i) {
-        if (i == idx) m_progressBars[i]->setValue(0);
-        m_progressBars[i]->setFormat("Cancelled");
-    }
+    for (int i = idx; i < m_progressItems.size(); ++i)
+        setRowState(i, i == idx ? 0 : -1, "Cancelled");
     m_cancelBtn->setVisible(false);
     m_statusLabel->setText("Download stopped");
     refresh();
