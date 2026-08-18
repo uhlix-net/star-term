@@ -14,6 +14,8 @@ class QMutex;
 class QPushButton;
 class QToolButton;
 class QProgressBar;
+class QScrollArea;
+class QVBoxLayout;
 class SessionPane;
 
 // -----------------------------------------------------------------------
@@ -154,6 +156,10 @@ private:
     void startNextDownload();
     void runWorker(SFTPWorker *worker);
 
+    // Per-file download progress rows.
+    void buildProgressRows(const QList<QPair<QString,QString>> &pairs);
+    void clearProgressRows();
+
     // A WSL distribution is browsed through its Windows share instead of SFTP:
     // ordinary file APIs, no session, no worker threads.
     bool    fsMode() const { return !m_fsRoot.isEmpty(); }
@@ -173,7 +179,13 @@ private:
     RemoteFileList *m_listWidget    = nullptr;
     QLabel         *m_statusLabel   = nullptr;
     QPushButton    *m_followBtn     = nullptr;
-    QProgressBar   *m_progressBar   = nullptr;
+
+    // One labelled progress row per queued file, scrollable so a large queue
+    // cannot grow the panel without bound. Index matches download order.
+    QScrollArea         *m_progressArea   = nullptr;
+    QWidget             *m_progressPanel  = nullptr;
+    QVBoxLayout         *m_progressLayout = nullptr;
+    QList<QProgressBar*> m_progressBars;
 
     QList<SFTPWorker*> m_workers;
 

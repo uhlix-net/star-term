@@ -12,6 +12,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -22,6 +23,8 @@
 #include <QMutexLocker>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QToolButton>
 #include <QUrl>
@@ -504,9 +507,20 @@ RemoteFileBrowser::RemoteFileBrowser(QWidget *parent) : QWidget(parent) {
         else                                        refresh();
     });
 
-    m_progressBar = new QProgressBar;
-    m_progressBar->setRange(0, 100);
-    m_progressBar->setVisible(false);
+    // One progress row per queued file. Held in a scroll area with a capped
+    // height so downloading many files scrolls instead of squeezing the list.
+    m_progressPanel  = new QWidget;
+    m_progressLayout = new QVBoxLayout(m_progressPanel);
+    m_progressLayout->setContentsMargins(0,0,0,0);
+    m_progressLayout->setSpacing(4);
+
+    m_progressArea = new QScrollArea;
+    m_progressArea->setWidget(m_progressPanel);
+    m_progressArea->setWidgetResizable(true);
+    m_progressArea->setFrameShape(QFrame::NoFrame);
+    m_progressArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_progressArea->setMaximumHeight(160);
+    m_progressArea->setVisible(false);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(8,8,8,8);
@@ -516,7 +530,7 @@ RemoteFileBrowser::RemoteFileBrowser(QWidget *parent) : QWidget(parent) {
     layout->addWidget(m_listWidget, 1);
     layout->addWidget(m_statusLabel);
     layout->addWidget(m_followBtn);
-    layout->addWidget(m_progressBar);
+    layout->addWidget(m_progressArea);
 
     setEnabled(false);
 }
@@ -755,15 +769,27 @@ void RemoteFileBrowser::onUploadDialog() {
     if (!paths.isEmpty()) onUploadRequested(paths);
 }
 
+// Where the download dialogs should open. Without an explicit directory Qt starts
+// in the process working directory, which for an installed build is the install
+// folder — not somewhere anyone wants to save files.
+static QString defaultDownloadDir() {
+    QString dir = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    if (dir.isEmpty() || !QDir(dir).exists())
+        dir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+    return dir;
+}
+
 void RemoteFileBrowser::onDownloadDialog(const QStringList &names) {
     if (!connected() || m_currentPath.isEmpty()) return;
+    const QString startDir = defaultDownloadDir();
     QList<QPair<QString,QString>> pairs;
     if (names.size() == 1) {
-        QString localPath = QFileDialog::getSaveFileName(this, "Download File", names[0]);
+        QString localPath = QFileDialog::getSaveFileName(
+            this, "Download File", QDir(startDir).filePath(names[0]));
         if (localPath.isEmpty()) return;
         pairs << qMakePair(names[0], localPath);
     } else {
-        QString dir = QFileDialog::getExistingDirectory(this, "Download Files To");
+        QString dir = QFileDialog::getExistingDirectory(this, "Download Files To", startDir);
         if (dir.isEmpty()) return;
         for (const QString &name : names)
             pairs << qMakePair(name, dir + "/" + name);
@@ -771,7 +797,39 @@ void RemoteFileBrowser::onDownloadDialog(const QStringList &names) {
     m_downloadQueue  = pairs;
     m_downloadTotal  = pairs.size();
     m_downloadIndex  = 0;
+    buildProgressRows(pairs);
     startNextDownload();
+}
+
+// One row per queued file: name on the left, its own bar beneath. Rows are
+// created up front so the whole queue is visible from the start rather than
+// appearing one at a time.
+void RemoteFileBrowser::buildProgressRows(const QList<QPair<QString,QString>> &pairs) {
+    clearProgressRows();
+    for (const auto &pair : pairs) {
+        QLabel *name = new QLabel(pair.first, m_progressPanel);
+        name->setStyleSheet("color: #8a8a8a;");
+        name->setToolTip(pair.second);       // full destination path
+        QProgressBar *bar = new QProgressBar(m_progressPanel);
+        bar->setRange(0, 100);
+        bar->setValue(0);
+        bar->setTextVisible(true);
+        bar->setFormat("Queued");
+        m_progressLayout->addWidget(name);
+        m_progressLayout->addWidget(bar);
+        m_progressBars.append(bar);
+    }
+    m_progressArea->setVisible(!m_progressBars.isEmpty());
+}
+
+void RemoteFileBrowser::clearProgressRows() {
+    m_progressBars.clear();
+    if (!m_progressLayout) return;
+    while (QLayoutItem *item = m_progressLayout->takeAt(0)) {
+        if (QWidget *w = item->widget()) w->deleteLater();
+        delete item;
+    }
+    if (m_progressArea) m_progressArea->setVisible(false);
 }
 
 void RemoteFileBrowser::onUploadRequested(const QStringList &localPaths) {
@@ -802,15 +860,26 @@ void RemoteFileBrowser::onUploadRequested(const QStringList &localPaths) {
 
 void RemoteFileBrowser::startNextDownload() {
     if (m_downloadQueue.isEmpty()) {
-        m_progressBar->setVisible(false);
+        clearProgressRows();
         refresh();
         return;
     }
     auto [name, localPath] = m_downloadQueue.takeFirst();
     ++m_downloadIndex;
     QString remotePath = m_currentPath + "/" + name;
-    m_progressBar->setValue(0);
-    m_progressBar->setVisible(true);
+    // Row indices are 1-based against m_downloadIndex; mark the finished row
+    // complete and light up the one now starting.
+    if (m_downloadIndex >= 2 && m_downloadIndex - 2 < m_progressBars.size()) {
+        QProgressBar *prev = m_progressBars[m_downloadIndex - 2];
+        prev->setValue(100);
+        prev->setFormat("Done");
+    }
+    if (m_downloadIndex - 1 < m_progressBars.size()) {
+        QProgressBar *cur = m_progressBars[m_downloadIndex - 1];
+        cur->setValue(0);
+        cur->setFormat("%p%");
+        m_progressArea->ensureWidgetVisible(cur);
+    }
     if (m_downloadTotal > 1)
         m_statusLabel->setText(QString("Downloading %1 (%2/%3)...").arg(name).arg(m_downloadIndex).arg(m_downloadTotal));
     else
@@ -833,7 +902,10 @@ void RemoteFileBrowser::startNextDownload() {
 }
 
 void RemoteFileBrowser::onDownloadProgress(qint64 done, qint64 total) {
-    if (total > 0) m_progressBar->setValue(static_cast<int>(done * 100 / total));
+    if (total <= 0) return;
+    const int idx = m_downloadIndex - 1;
+    if (idx >= 0 && idx < m_progressBars.size())
+        m_progressBars[idx]->setValue(static_cast<int>(done * 100 / total));
 }
 
 void RemoteFileBrowser::onDownloadFinished(const QString&, const QString&) {
@@ -842,7 +914,11 @@ void RemoteFileBrowser::onDownloadFinished(const QString&, const QString&) {
 
 void RemoteFileBrowser::onDownloadError(const QString &message) {
     m_downloadQueue.clear();
-    m_progressBar->setVisible(false);
+    // Leave the rows up so it stays visible which file failed; mark the rest
+    // abandoned rather than silently vanishing mid-queue.
+    const int idx = m_downloadIndex - 1;
+    for (int i = idx; i < m_progressBars.size(); ++i)
+        m_progressBars[i]->setFormat(i == idx ? "Failed" : "Cancelled");
     onError(message);
 }
 
