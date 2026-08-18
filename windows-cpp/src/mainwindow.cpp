@@ -934,20 +934,53 @@ void MainWindow::reconnectPane(SessionPane *pane) {
 }
 
 void MainWindow::onHostKeyUnknown(const QString &host, const QString &keyType,
-                                   const QString &fingerprint, const QString &/*hexHash*/) {
+                                   const QString &fingerprint,
+                                   const QString &storedFingerprint,
+                                   bool mismatch) {
     SSHSession *session = qobject_cast<SSHSession*>(sender());
-    int answer = QMessageBox::question(
-        this, "Unknown Host Key",
-        QString("The authenticity of host '%1' can't be established.\n"
-                "%2 key fingerprint:\n%3\n\n"
-                "Are you sure you want to continue connecting?")
-            .arg(host, keyType, fingerprint),
-        QMessageBox::Yes | QMessageBox::No, QMessageBox::No
-    );
+    bool accepted = false;
+
+    if (mismatch) {
+        // A key we already trust has changed. This is the MITM signal, so it gets
+        // its own alarming dialog rather than the routine first-connect prompt.
+        QMessageBox box(this);
+        box.setIcon(QMessageBox::Critical);
+        box.setWindowTitle("Remote Host Identification Has Changed");
+        box.setText(QString("The %1 host key for '%2' does not match the key "
+                            "already trusted for this host.").arg(keyType, host));
+        box.setInformativeText(
+            QString("Someone may be impersonating this host to intercept your "
+                    "session — or the host's key was legitimately changed.\n\n"
+                    "Previously trusted:\n%1\n\n"
+                    "Offered now:\n%2\n\n"
+                    "Continue only if you know why the key changed. Continuing "
+                    "replaces the trusted key for this host.")
+                .arg(storedFingerprint.isEmpty() ? QString("(unavailable)")
+                                                 : storedFingerprint,
+                     fingerprint));
+
+        QPushButton *cancelBtn  = box.addButton("Cancel Connection",
+                                                QMessageBox::RejectRole);
+        QPushButton *replaceBtn = box.addButton("Replace Key and Connect",
+                                                QMessageBox::DestructiveRole);
+        box.setDefaultButton(cancelBtn);
+        box.exec();
+        accepted = (box.clickedButton() == replaceBtn);
+    } else {
+        int answer = QMessageBox::question(
+            this, "Unknown Host Key",
+            QString("The authenticity of host '%1' can't be established.\n"
+                    "%2 key fingerprint:\n%3\n\n"
+                    "Are you sure you want to continue connecting?")
+                .arg(host, keyType, fingerprint),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No
+        );
+        accepted = (answer == QMessageBox::Yes);
+    }
 
     if (session) {
-        if (answer == QMessageBox::Yes) session->acceptHostKey();
-        else                            session->rejectHostKey();
+        if (accepted) session->acceptHostKey();
+        else          session->rejectHostKey();
     }
 }
 

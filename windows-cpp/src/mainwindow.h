@@ -51,7 +51,8 @@ private slots:
     void onTabCloseRequested(int index);
     void onTabChanged(int index);
     void onHostKeyUnknown(const QString &host, const QString &keyType,
-                          const QString &fingerprint, const QString &hexHash);
+                          const QString &fingerprint, const QString &storedFingerprint,
+                          bool mismatch);
 
 private:
     void addPane(SessionPane *pane);
