@@ -52,8 +52,12 @@ signals:
     // inherited from TerminalSession.
 
     // Emitted from SSH thread; UI thread must call acceptHostKey()/rejectHostKey().
+    // mismatch == true means known_hosts already holds a DIFFERENT key for this
+    // host (possible MITM), not merely that the host is new. storedFingerprint is
+    // the previously trusted key in that case, and empty otherwise.
     void hostKeyUnknown(const QString &host, const QString &keyType,
-                        const QString &fingerprint, const QString &hexHash);
+                        const QString &fingerprint, const QString &storedFingerprint,
+                        bool mismatch);
 
 public slots:
     void acceptHostKey();

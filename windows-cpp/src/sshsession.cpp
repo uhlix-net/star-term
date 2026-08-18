@@ -144,6 +144,30 @@ bool SSHSession::checkKnownHost(const char *fingerprint, size_t /*len*/,
         return true;
     }
 
+    // CHECK_FAILURE means the check itself could not be performed. That is an
+    // error, not a trust decision — refuse rather than asking the user to vouch
+    // for a key we were unable to evaluate.
+    if (check == LIBSSH2_KNOWNHOST_CHECK_FAILURE) {
+        debugLog(QString("known_hosts check failed internally; refusing host key"));
+        libssh2_knownhost_free(kh);
+        return false;
+    }
+
+    // MISMATCH (we hold a different key for this host) is a possible MITM and
+    // must not be presented like a first-time connection.
+    const bool mismatch = (check == LIBSSH2_KNOWNHOST_CHECK_MISMATCH);
+
+    // On MISMATCH checkp hands back the conflicting entry. Render its
+    // fingerprint now, while the pointer is still valid, so the warning can
+    // show the user exactly which key is being replaced.
+    QString storedFingerprint;
+    if (mismatch && found && found->key) {
+        QByteArray storedKey = QByteArray::fromBase64(QByteArray(found->key));
+        if (!storedKey.isEmpty())
+            storedFingerprint = sha256FingerprintHex(
+                storedKey.constData(), static_cast<size_t>(storedKey.size()));
+    }
+
     // Unknown or mismatched — prompt user.
     QString fingerprintStr = sha256FingerprintHex(key, keyLen);
     QString keyType        = libssh2TypeName(type);
@@ -154,8 +178,7 @@ bool SSHSession::checkKnownHost(const char *fingerprint, size_t /*len*/,
         m_hostKeyAccepted = false;
     }
 
-    emit hostKeyUnknown(m_host, keyType, fingerprintStr,
-                        QString::fromLatin1(QByteArray(key, static_cast<int>(qMin<size_t>(keyLen, 32))).toHex()));
+    emit hostKeyUnknown(m_host, keyType, fingerprintStr, storedFingerprint, mismatch);
 
     {
         QMutexLocker lock(&m_hostKeyMutex);
@@ -184,6 +207,15 @@ bool SSHSession::checkKnownHost(const char *fingerprint, size_t /*len*/,
         case LIBSSH2_HOSTKEY_TYPE_ECDSA_521:keyTypeFlag = LIBSSH2_KNOWNHOST_KEY_ECDSA_521; break;
         case LIBSSH2_HOSTKEY_TYPE_ED25519:  keyTypeFlag = LIBSSH2_KNOWNHOST_KEY_ED25519;   break;
         default:                            keyTypeFlag = LIBSSH2_KNOWNHOST_KEY_UNKNOWN;    break;
+    }
+
+    // Replace, don't append. libssh2_knownhost_addc() only ever adds, so without
+    // this the superseded entry stays in the file and a later checkp() will
+    // MATCH against it — leaving both the old key and an accepted attacker key
+    // permanently trusted, with nothing ever looking wrong again.
+    if (mismatch && found) {
+        libssh2_knownhost_del(kh, found);
+        found = nullptr;
     }
 
     libssh2_knownhost_addc(
