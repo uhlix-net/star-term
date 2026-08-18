@@ -195,7 +195,20 @@ constexpr int kMaxConcurrentDownloads = 2;
 
 // Geometry helpers, shared by paint() and the click handler so a hit test can
 // never disagree with what was drawn.
-int percentWidth(const QFontMetrics &fm) { return fm.horizontalAdvance("100%") + 4; }
+// Every string that can appear beside the bar. The reserved width is measured
+// from the widest of them, so a long word cannot spill back over the groove —
+// the text is right-aligned, so anything too wide for its box overflows left.
+// Add any new status string here or it will overlap the bar.
+const char *const kStatusStrings[] = {
+    "100%", "Queued", "Done", "Failed", "Cancelled", "Stopping..."
+};
+
+int statusWidth(const QFontMetrics &fm) {
+    int w = 0;
+    for (const char *text : kStatusStrings)
+        w = qMax(w, fm.horizontalAdvance(QString::fromLatin1(text)));
+    return w + 4;
+}
 
 QRect rowContent(const QRect &itemRect) {
     return itemRect.adjusted(kRowPad, kRowPad, -kRowPad, -kRowPad);
@@ -251,9 +264,9 @@ public:
 
         // Bottom line: groove, then the percentage, then the cancel glyph —
         // reading left to right, all on one line.
-        const int pctW    = percentWidth(fm);
+        const int statusW = statusWidth(fm);
         const int barY    = textRect.bottom() + kRowPad;
-        const int reserve = pctW + kGap + (active ? kCancelW + kGap : 0);
+        const int reserve = statusW + kGap + (active ? kCancelW + kGap : 0);
         const QRect barRect(r.left(), barY, qMax(24, r.width() - reserve), kBarHeight);
 
         // Draw the groove by hand rather than via QStyle::CE_ProgressBar. The app
@@ -281,9 +294,12 @@ public:
         }
         painter->restore();
 
-        const QRect pctRect(barRect.right() + kGap, barY, pctW, kBarHeight);
-        painter->drawText(pctRect, Qt::AlignRight | Qt::AlignVCenter,
-                          index.data(DownloadStatusRole).toString());
+        const QRect statusRect(barRect.right() + kGap, barY, statusW, kBarHeight);
+        // Elided as a backstop: if a status string is ever added without being
+        // listed above, it gets truncated rather than drawn across the groove.
+        painter->drawText(statusRect, Qt::AlignRight | Qt::AlignVCenter,
+                          fm.elidedText(index.data(DownloadStatusRole).toString(),
+                                        Qt::ElideRight, statusRect.width()));
 
         if (active) {
             const QRect c = cancelRectFor(option.rect, fm);
