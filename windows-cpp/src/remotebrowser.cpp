@@ -16,7 +16,6 @@
 #include <QHBoxLayout>
 #include <QPainter>
 #include <QStyle>
-#include <QStyleOptionProgressBar>
 #include <QStyledItemDelegate>
 #include <QLabel>
 #include <QLineEdit>
@@ -253,15 +252,30 @@ public:
         const int reserve = pctW + kGap + (active ? kCancelW + kGap : 0);
         const QRect barRect(r.left(), barY, qMax(24, r.width() - reserve), kBarHeight);
 
-        QStyleOptionProgressBar pb;
-        pb.rect          = barRect;
-        pb.minimum       = 0;
-        pb.maximum       = 100;
-        pb.progress      = index.data(DownloadPercentRole).toInt();
-        pb.textVisible   = false;      // the number lives to the right of the bar
-        pb.state         = QStyle::State_Enabled | QStyle::State_Horizontal;
-        pb.palette       = option.palette;
-        style->drawControl(QStyle::CE_ProgressBar, &pb, painter, nullptr);
+        // Draw the groove by hand rather than via QStyle::CE_ProgressBar. The app
+        // installs a global stylesheet, so the style here is a QStyleSheetStyle;
+        // asking it to draw a progress bar with a null widget gives it no styling
+        // context to resolve against, and its CE_ProgressBar path then ignores the
+        // rect it was handed — every row's groove landed in the same place while
+        // everything painted directly (name, percentage, cancel) stayed correct.
+        // Painting it here keeps the groove tied to this row's rect, whatever the
+        // active style happens to be.
+        const int pct = qBound(0, index.data(DownloadPercentRole).toInt(), 100);
+
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing, true);
+        painter->setPen(QPen(option.palette.color(QPalette::Mid), 1));
+        painter->setBrush(option.palette.color(QPalette::Base));
+        painter->drawRoundedRect(QRectF(barRect).adjusted(0.5, 0.5, -0.5, -0.5), 3, 3);
+
+        if (pct > 0) {
+            QRectF chunk(barRect);
+            chunk.setWidth(barRect.width() * pct / 100.0);
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(option.palette.color(QPalette::Highlight));
+            painter->drawRoundedRect(chunk.adjusted(1, 1, -1, -1), 2, 2);
+        }
+        painter->restore();
 
         const QRect pctRect(barRect.right() + kGap, barY, pctW, kBarHeight);
         painter->drawText(pctRect, Qt::AlignRight | Qt::AlignVCenter,
