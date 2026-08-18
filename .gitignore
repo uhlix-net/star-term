@@ -1,4 +1,7 @@
 windows-cpp/build/
 windows-cpp/installer/Output/
 session_id.txt
+# WSL surfaces the Windows "downloaded from the internet" NTFS stream as a real
+# file named "<file>:Zone.Identifier" — note the colon, not a dot.
+*:Zone.Identifier
 *.Zone.Identifier
