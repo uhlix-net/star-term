@@ -763,25 +763,26 @@ void RemoteFileBrowser::onContextMenu(const QPoint &pos) {
         onDownloadDialog(fileNames);
 }
 
-void RemoteFileBrowser::onUploadDialog() {
-    if (!connected() || m_currentPath.isEmpty()) return;
-    QStringList paths = QFileDialog::getOpenFileNames(this, "Upload Files");
-    if (!paths.isEmpty()) onUploadRequested(paths);
-}
-
-// Where the download dialogs should open. Without an explicit directory Qt starts
+// Where the transfer dialogs should open. Without an explicit directory Qt starts
 // in the process working directory, which for an installed build is the install
-// folder — not somewhere anyone wants to save files.
-static QString defaultDownloadDir() {
+// folder — not somewhere anyone wants to save from or pick files out of.
+static QString defaultTransferDir() {
     QString dir = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
     if (dir.isEmpty() || !QDir(dir).exists())
         dir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
     return dir;
 }
 
+void RemoteFileBrowser::onUploadDialog() {
+    if (!connected() || m_currentPath.isEmpty()) return;
+    QStringList paths = QFileDialog::getOpenFileNames(
+        this, "Upload Files", defaultTransferDir());
+    if (!paths.isEmpty()) onUploadRequested(paths);
+}
+
 void RemoteFileBrowser::onDownloadDialog(const QStringList &names) {
     if (!connected() || m_currentPath.isEmpty()) return;
-    const QString startDir = defaultDownloadDir();
+    const QString startDir = defaultTransferDir();
     QList<QPair<QString,QString>> pairs;
     if (names.size() == 1) {
         QString localPath = QFileDialog::getSaveFileName(
