@@ -21,7 +21,8 @@ class SessionPane;
 // Item data roles for the download progress rows.
 enum DownloadRole {
     DownloadPercentRole = Qt::UserRole + 100,   // int 0..100
-    DownloadStatusRole  = Qt::UserRole + 101    // text drawn inside the bar
+    DownloadStatusRole  = Qt::UserRole + 101,   // text drawn right of the bar
+    DownloadActiveRole  = Qt::UserRole + 102    // still running or queued → cancellable
 };
 
 // -----------------------------------------------------------------------
@@ -174,8 +175,10 @@ private:
     // Per-file download progress rows.
     void buildProgressRows(const QList<QPair<QString,QString>> &pairs);
     void clearProgressRows();
-    void setRowState(int index, int percent, const QString &status);
+    void setRowState(int index, int percent, const QString &status, bool active = true);
     void cancelDownloads();
+    void cancelRow(int row);
+    bool rowCancelled(int row) const;
 
     // A WSL distribution is browsed through its Windows share instead of SFTP:
     // ordinary file APIs, no session, no worker threads.

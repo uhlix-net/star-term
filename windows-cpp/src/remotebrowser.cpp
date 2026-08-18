@@ -23,6 +23,7 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QMutex>
 #include <QMutexLocker>
 #include <QPushButton>
@@ -33,6 +34,7 @@
 #include <QVBoxLayout>
 
 #include <cstring>
+#include <functional>
 
 // -----------------------------------------------------------------------
 // CwdTracker
@@ -167,24 +169,56 @@ SFTPWorker::SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp, QMutex *ses
 // -----------------------------------------------------------------------
 // Download progress rows
 //
-// Painted by a delegate rather than built from stacked child widgets. Three
-// earlier attempts using a QVBoxLayout of QLabel/QProgressBar pairs inside a
-// QScrollArea all ended with the rows drawn on top of one another when the
-// panel was short. A delegate paints inside the rect the view hands it, so the
-// view owns geometry and scrolling and overlap cannot happen.
+// Painted by a delegate rather than built from stacked child widgets, after
+// three attempts using a QVBoxLayout of QLabel/QProgressBar pairs inside a
+// QScrollArea all ended with the rows drawn on top of one another.
+//
+// Moving to a delegate was not enough on its own: rows still overlapped because
+// setUniformItemSizes() cached the first row's measured height for every row,
+// and that first measurement can happen before the view's font is applied — so
+// every row was allotted less height than paint() draws into. Two things fix it
+// for good: measure from the view's own font, and clip painting to the row rect
+// so nothing can bleed into its neighbours whatever the view decides.
+//
+// Row layout is: filename on top, then groove, percentage and cancel glyph on
+// one line beneath it.
 // -----------------------------------------------------------------------
 namespace {
 
 constexpr int kBarHeight = 16;
 constexpr int kRowPad    = 4;
+constexpr int kGap       = 6;
+constexpr int kCancelW   = 16;
+
+// Geometry helpers, shared by paint() and the click handler so a hit test can
+// never disagree with what was drawn.
+int percentWidth(const QFontMetrics &fm) { return fm.horizontalAdvance("100%") + 4; }
+
+QRect rowContent(const QRect &itemRect) {
+    return itemRect.adjusted(kRowPad, kRowPad, -kRowPad, -kRowPad);
+}
+
+QRect cancelRectFor(const QRect &itemRect, const QFontMetrics &fm) {
+    const QRect r = rowContent(itemRect);
+    const int   y = r.top() + fm.height() + kRowPad;
+    return QRect(r.right() - kCancelW, y + (kBarHeight - kCancelW) / 2,
+                 kCancelW, kCancelW);
+}
 
 class DownloadRowDelegate : public QStyledItemDelegate {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
 
+    // Called with the row index when its cancel glyph is clicked.
+    std::function<void(int)> onCancelRow;
+
     QSize sizeHint(const QStyleOptionViewItem &option,
                    const QModelIndex &) const override {
-        return QSize(0, option.fontMetrics.height() + kBarHeight + kRowPad * 3);
+        // Take the font from the view rather than the style option: the option's
+        // metrics can still be the default when the view first measures a row,
+        // which yields a row shorter than paint() needs.
+        const QFontMetrics fm(option.widget ? option.widget->font() : option.font);
+        return QSize(0, fm.height() + kBarHeight + kRowPad * 3);
     }
 
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
@@ -193,35 +227,67 @@ public:
         initStyleOption(&opt, index);
         QStyle *style = opt.widget ? opt.widget->style() : QApplication::style();
 
-        // Draw the row background only — the text is placed by hand below.
+        painter->save();
+        // Hard clip to this row. Whatever the view decided the row height is,
+        // nothing here can bleed into the row above or below.
+        painter->setClipRect(option.rect);
+
         opt.text.clear();
         style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, opt.widget);
 
-        const QRect r       = option.rect.adjusted(kRowPad, kRowPad, -kRowPad, -kRowPad);
-        const int   textH   = option.fontMetrics.height();
-        const QRect textRect(r.left(), r.top(), r.width(), textH);
+        const QFontMetrics fm     = option.fontMetrics;
+        const QRect        r      = rowContent(option.rect);
+        const QRect        textRect(r.left(), r.top(), r.width(), fm.height());
+        const bool         active = index.data(DownloadActiveRole).toBool();
 
-        // Filename, elided in the middle so the extension stays readable.
-        painter->save();
         painter->setPen(option.palette.color(QPalette::Text));
         painter->drawText(
             textRect, Qt::AlignLeft | Qt::AlignVCenter,
-            option.fontMetrics.elidedText(index.data(Qt::DisplayRole).toString(),
-                                          Qt::ElideMiddle, textRect.width()));
-        painter->restore();
+            fm.elidedText(index.data(Qt::DisplayRole).toString(),
+                          Qt::ElideMiddle, textRect.width()));
+
+        // Bottom line: groove, then the percentage, then the cancel glyph —
+        // reading left to right, all on one line.
+        const int pctW    = percentWidth(fm);
+        const int barY    = textRect.bottom() + kRowPad;
+        const int reserve = pctW + kGap + (active ? kCancelW + kGap : 0);
+        const QRect barRect(r.left(), barY, qMax(24, r.width() - reserve), kBarHeight);
 
         QStyleOptionProgressBar pb;
-        pb.rect          = QRect(r.left(), textRect.bottom() + kRowPad,
-                                 r.width(), kBarHeight);
+        pb.rect          = barRect;
         pb.minimum       = 0;
         pb.maximum       = 100;
         pb.progress      = index.data(DownloadPercentRole).toInt();
-        pb.text          = index.data(DownloadStatusRole).toString();
-        pb.textVisible   = !pb.text.isEmpty();
-        pb.textAlignment = Qt::AlignCenter;
+        pb.textVisible   = false;      // the number lives to the right of the bar
         pb.state         = QStyle::State_Enabled | QStyle::State_Horizontal;
         pb.palette       = option.palette;
         style->drawControl(QStyle::CE_ProgressBar, &pb, painter, nullptr);
+
+        const QRect pctRect(barRect.right() + kGap, barY, pctW, kBarHeight);
+        painter->drawText(pctRect, Qt::AlignRight | Qt::AlignVCenter,
+                          index.data(DownloadStatusRole).toString());
+
+        if (active) {
+            const QRect c = cancelRectFor(option.rect, fm);
+            painter->setPen(option.palette.color(QPalette::Text));
+            painter->drawRect(c.adjusted(0, 0, -1, -1));
+            const int inset = 4;
+            const QRect x = c.adjusted(inset, inset, -inset - 1, -inset - 1);
+            painter->drawLine(x.topLeft(), x.bottomRight());
+            painter->drawLine(x.topRight(), x.bottomLeft());
+        }
+
+        painter->restore();
+    }
+
+    bool editorEvent(QEvent *event, QAbstractItemModel *, const QStyleOptionViewItem &option,
+                     const QModelIndex &index) override {
+        if (event->type() != QEvent::MouseButtonRelease) return false;
+        if (!index.data(DownloadActiveRole).toBool())     return false;
+        auto *me = static_cast<QMouseEvent*>(event);
+        if (!cancelRectFor(option.rect, option.fontMetrics).contains(me->pos())) return false;
+        if (onCancelRow) onCancelRow(index.row());
+        return true;
     }
 };
 
@@ -584,16 +650,21 @@ RemoteFileBrowser::RemoteFileBrowser(QWidget *parent) : QWidget(parent) {
     // One progress row per queued file. Held in a scroll area with a capped
     // height so downloading many files scrolls instead of squeezing the list.
     m_progressList = new QListWidget;
-    m_progressList->setItemDelegate(new DownloadRowDelegate(m_progressList));
+    auto *rowDelegate = new DownloadRowDelegate(m_progressList);
+    rowDelegate->onCancelRow = [this](int row) { cancelRow(row); };
+    m_progressList->setItemDelegate(rowDelegate);
     m_progressList->setSelectionMode(QAbstractItemView::NoSelection);
     m_progressList->setFocusPolicy(Qt::NoFocus);
     m_progressList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_progressList->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-    m_progressList->setUniformItemSizes(true);
+    // Deliberately NOT setUniformItemSizes: it caches the first row's measured
+    // height for every row, and a hint measured before the view's font is
+    // applied gives rows too short for what the delegate draws.
     m_progressList->setMaximumHeight(160);
     m_progressList->setVisible(false);
 
-    m_cancelBtn = new QPushButton("Stop Download");
+    // Whole-queue stop, alongside the per-row cancel in each item.
+    m_cancelBtn = new QPushButton("Stop All Downloads");
     m_cancelBtn->setVisible(false);
     connect(m_cancelBtn, &QPushButton::clicked, this, &RemoteFileBrowser::cancelDownloads);
 
@@ -888,6 +959,7 @@ void RemoteFileBrowser::buildProgressRows(const QList<QPair<QString,QString>> &p
         item->setToolTip(pair.second);                  // full destination path
         item->setData(DownloadPercentRole, 0);
         item->setData(DownloadStatusRole, QString("Queued"));
+        item->setData(DownloadActiveRole, true);
         m_progressItems.append(item);
     }
     m_progressList->setVisible(!m_progressItems.isEmpty());
@@ -908,7 +980,7 @@ void RemoteFileBrowser::cancelDownloads() {
     // Nothing in flight (fsMode copies are synchronous) — tidy up here instead.
     const int idx = m_downloadIndex - 1;
     for (int i = idx + 1; i < m_progressItems.size(); ++i)
-        setRowState(i, -1, "Cancelled");
+        setRowState(i, -1, "Cancelled", false);
     m_cancelBtn->setVisible(false);
     m_statusLabel->setText("Download stopped");
 }
@@ -922,12 +994,36 @@ void RemoteFileBrowser::clearProgressRows() {
     if (m_cancelBtn) m_cancelBtn->setVisible(false);
 }
 
-// Set a row's bar and the text drawn inside it. Percent < 0 leaves it unchanged.
-void RemoteFileBrowser::setRowState(int index, int percent, const QString &status) {
+// Set a row's bar and the text drawn beside it. Percent < 0 leaves it unchanged.
+// active == false drops the cancel glyph, for rows that have finished one way or another.
+void RemoteFileBrowser::setRowState(int index, int percent, const QString &status, bool active) {
     if (index < 0 || index >= m_progressItems.size()) return;
     QListWidgetItem *item = m_progressItems[index];
     if (percent >= 0) item->setData(DownloadPercentRole, percent);
     item->setData(DownloadStatusRole, status);
+    item->setData(DownloadActiveRole, active);
+}
+
+bool RemoteFileBrowser::rowCancelled(int row) const {
+    if (row < 0 || row >= m_progressItems.size()) return false;
+    return m_progressItems[row]->data(DownloadStatusRole).toString() == "Cancelled";
+}
+
+// Cancel one file. The row index is the original queue position, which stays
+// fixed; the queue itself is left intact and cancelled rows are skipped when
+// their turn arrives, so row and queue positions cannot drift apart.
+void RemoteFileBrowser::cancelRow(int row) {
+    if (row < 0 || row >= m_progressItems.size()) return;
+    const int active = m_downloadIndex - 1;
+    if (row < active) return;                     // already finished
+
+    if (row == active) {
+        // In flight — the worker deletes its own partial file and reports back.
+        setRowState(row, 0, "Cancelled", false);
+        if (m_activeDownload) m_activeDownload->cancel();
+        return;
+    }
+    setRowState(row, -1, "Cancelled", false);     // still queued; skipped later
 }
 
 void RemoteFileBrowser::onUploadRequested(const QStringList &localPaths) {
@@ -957,18 +1053,28 @@ void RemoteFileBrowser::onUploadRequested(const QStringList &localPaths) {
 }
 
 void RemoteFileBrowser::startNextDownload() {
-    if (m_downloadQueue.isEmpty()) {
-        clearProgressRows();
-        refresh();
-        return;
+    // Rows cancelled individually stay in the queue but are stepped over here,
+    // so a row's index always matches its original position.
+    QString name, localPath;
+    for (;;) {
+        if (m_downloadQueue.isEmpty()) {
+            if (m_downloadIndex >= 1 && !rowCancelled(m_downloadIndex - 1))
+                setRowState(m_downloadIndex - 1, 100, "Done", false);
+            clearProgressRows();
+            refresh();
+            return;
+        }
+        auto pair = m_downloadQueue.takeFirst();
+        ++m_downloadIndex;
+        if (m_downloadIndex >= 2 && !rowCancelled(m_downloadIndex - 2))
+            setRowState(m_downloadIndex - 2, 100, "Done", false);
+        if (!rowCancelled(m_downloadIndex - 1)) {
+            name      = pair.first;
+            localPath = pair.second;
+            break;
+        }
     }
-    auto [name, localPath] = m_downloadQueue.takeFirst();
-    ++m_downloadIndex;
     QString remotePath = m_currentPath + "/" + name;
-    // Row indices are 1-based against m_downloadIndex; mark the finished row
-    // complete and light up the one now starting.
-    if (m_downloadIndex >= 2)
-        setRowState(m_downloadIndex - 2, 100, "Done");
     const int curRow = m_downloadIndex - 1;
     if (curRow >= 0 && curRow < m_progressItems.size()) {
         setRowState(curRow, 0, "0%");
@@ -1016,7 +1122,7 @@ void RemoteFileBrowser::onDownloadError(const QString &message) {
     // abandoned rather than silently vanishing mid-queue.
     const int idx = m_downloadIndex - 1;
     for (int i = idx; i < m_progressItems.size(); ++i)
-        setRowState(i, -1, i == idx ? "Failed" : "Cancelled");
+        setRowState(i, -1, i == idx ? "Failed" : "Cancelled", false);
     m_cancelBtn->setVisible(false);
     onError(message);
 }
@@ -1027,7 +1133,7 @@ void RemoteFileBrowser::onDownloadCancelled(const QString&) {
     m_downloadQueue.clear();
     const int idx = m_downloadIndex - 1;
     for (int i = idx; i < m_progressItems.size(); ++i)
-        setRowState(i, i == idx ? 0 : -1, "Cancelled");
+        setRowState(i, i == idx ? 0 : -1, "Cancelled", false);
     m_cancelBtn->setVisible(false);
     m_statusLabel->setText("Download stopped");
     refresh();
