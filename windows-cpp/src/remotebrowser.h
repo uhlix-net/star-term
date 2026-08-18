@@ -4,6 +4,7 @@
 #include <QThread>
 #include <QString>
 #include <QObject>
+#include <QAtomicInt>
 
 #include <libssh2.h>
 #include <libssh2_sftp.h>
@@ -79,12 +80,19 @@ public:
     SFTPWorker(LIBSSH2_SESSION *session, LIBSSH2_SFTP *sftp, QMutex *sessionLock,
                const QString &path, QObject *parent = nullptr);
 
+    // Ask a running download to stop. Safe to call from the UI thread: the
+    // transfer loop checks the flag between chunks and deletes the partial file.
+    void cancel() { m_cancelled.storeRelaxed(1); }
+
 signals:
     void listed(const QString &path, const QList<SFTPEntry> &entries);
     void homeResolved(const QString &home);
     void transferred(const QString &mode, const QString &path);
     void progress(qint64 done, qint64 total);
     void error(const QString &msg);
+    // Emitted instead of transferred/error when cancel() stopped the transfer.
+    // localPath has already been deleted by the time this arrives.
+    void cancelled(const QString &localPath);
 
 protected:
     void run() override;
@@ -96,6 +104,7 @@ private:
     Op               m_op;
     QString          m_localPath;
     QString          m_remotePath;
+    QAtomicInt       m_cancelled { 0 };
 };
 
 // -----------------------------------------------------------------------
@@ -148,6 +157,7 @@ private slots:
     void onDownloadProgress(qint64 done, qint64 total);
     void onDownloadFinished(const QString &mode, const QString &path);
     void onDownloadError(const QString &message);
+    void onDownloadCancelled(const QString &localPath);
     void onCwdChanged(const QString &path);
 
 private:
@@ -159,6 +169,7 @@ private:
     // Per-file download progress rows.
     void buildProgressRows(const QList<QPair<QString,QString>> &pairs);
     void clearProgressRows();
+    void cancelDownloads();
 
     // A WSL distribution is browsed through its Windows share instead of SFTP:
     // ordinary file APIs, no session, no worker threads.
@@ -186,6 +197,11 @@ private:
     QWidget             *m_progressPanel  = nullptr;
     QVBoxLayout         *m_progressLayout = nullptr;
     QList<QProgressBar*> m_progressBars;
+    QPushButton         *m_cancelBtn      = nullptr;
+
+    // The download currently in flight, so it can be cancelled. Cleared when
+    // the transfer ends by any route.
+    SFTPWorker *m_activeDownload = nullptr;
 
     QList<SFTPWorker*> m_workers;
 
