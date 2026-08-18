@@ -29,3 +29,17 @@ void clearLicenseKey();
 QJsonObject getLicenseInfo();
 
 LicenseStatus getLicenseStatus();
+
+// Restart the 30-day trial from today.
+//
+// TEMPORARY — pre-1.0 only. This exists so the trial can be re-armed during
+// development and demos; it makes the trial unlimited in practice, since it is
+// reachable from the expiry dialog with no gating. Remove this, its button in
+// LicenseGateDialog, and TRIAL_REARM_NOTICE before the 1.0 release.
+void resetTrial();
+
+// Shown wherever the re-arm control appears, so the temporary nature of the
+// feature is visible in the product and not only in the source.
+static const char* TRIAL_REARM_NOTICE =
+    "Resetting the trial is a pre-release convenience and is expected to be "
+    "removed in the 1.0 release.";
