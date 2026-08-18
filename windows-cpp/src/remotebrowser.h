@@ -5,6 +5,7 @@
 #include <QString>
 #include <QObject>
 #include <QAtomicInt>
+#include <QHash>
 
 #include <libssh2.h>
 #include <libssh2_sftp.h>
@@ -169,16 +170,27 @@ private slots:
 private:
     void resolveHome();
     void setPath(const QString &path);
-    void startNextDownload();
     void runWorker(SFTPWorker *worker);
 
+    // A queued or running download and the row that displays it. Pairing them
+    // here is what lets several downloads be in flight without sharing a row.
+    struct PendingDownload {
+        QString          name;
+        QString          localPath;
+        QListWidgetItem *row = nullptr;
+    };
+
+    // Start as many queued downloads as the concurrency limit allows, and tidy
+    // up once nothing is left running or waiting.
+    void pumpDownloads();
+
     // Per-file download progress rows.
-    void buildProgressRows(const QList<QPair<QString,QString>> &pairs);
+    QList<QListWidgetItem*> appendProgressRows(const QList<QPair<QString,QString>> &pairs);
     void clearProgressRows();
-    void setRowState(int index, int percent, const QString &status, bool active = true);
+    void setRowState(QListWidgetItem *row, int percent, const QString &status, bool active = true);
     void cancelDownloads();
     void cancelRow(int row);
-    bool rowCancelled(int row) const;
+    bool rowCancelled(QListWidgetItem *row) const;
 
     // A WSL distribution is browsed through its Windows share instead of SFTP:
     // ordinary file APIs, no session, no worker threads.
@@ -203,18 +215,16 @@ private:
     // One row per queued file, in download order. A QListWidget with a painting
     // delegate rather than stacked child widgets: the list owns row geometry and
     // scrolling, so rows cannot be compressed onto each other.
-    QListWidget              *m_progressList = nullptr;
-    QList<QListWidgetItem*>   m_progressItems;
-    QPushButton              *m_cancelBtn    = nullptr;
-
-    // The download currently in flight, so it can be cancelled. Cleared when
-    // the transfer ends by any route.
-    SFTPWorker *m_activeDownload = nullptr;
+    QListWidget *m_progressList = nullptr;
+    QPushButton *m_cancelBtn    = nullptr;
 
     QList<SFTPWorker*> m_workers;
 
-    // Download queue
-    QList<QPair<QString,QString>> m_downloadQueue;
-    int m_downloadTotal = 0;
-    int m_downloadIndex = 0;
+    // Downloads waiting to start, in order.
+    QList<PendingDownload> m_downloadQueue;
+
+    // Transfers currently running, each mapped to the row it owns. Progress
+    // signals are routed back to a row through this, so concurrent downloads
+    // update their own row instead of whichever one happens to be last.
+    QHash<SFTPWorker*, QListWidgetItem*> m_activeRows;
 };
