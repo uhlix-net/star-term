@@ -2,16 +2,20 @@
 > Project memory file generated from a Claude.ai troubleshooting session (2026-07-16/17).
 > Purpose: give Claude Code (and future humans) full context on the Windows build environment,
 > its quirks, and every fix applied while getting the app to build, run, and package.
+>
+> **Updated 2026-08-07:** target/file names re-verified against the tree. The CMake target
+> is `star_term` (not `star_term_cpp`); artifacts are `star_term.exe`, `run_star_term.bat`,
+> and `star_term_setup.exe`. `README.md` has been brought in line with these notes.
 
 ## Project overview
 
-- **App**: `star_term_cpp` — a Qt6 Widgets SSH terminal client ("Star Term C++ Edition")
+- **App**: `star_term` — a Qt6 Widgets SSH terminal client ("Star Term C++ Edition")
 - **Repo path**: `U:\home\huhl\git-repos\star-term\windows-cpp` (U: is a mapped network drive, volume serial 0000-0000)
 - **Sources**: `src\` (main.cpp, config.cpp, debug.cpp, theme.cpp, icons.cpp, licensing.cpp,
   vt100.cpp, terminalwidget.cpp, sshsession.cpp, sessionpane.cpp, sidebar.cpp/.h,
   remotebrowser.cpp, connectiondialog.cpp, preferencesdialog.cpp, licensedialog.cpp,
   macrospanel.cpp, mainwindow.cpp, statusbar.cpp)
-- **Installer**: `installer\` (setup.nsi for NSIS, app.rc, app.ico, run_star_term_cpp.bat)
+- **Installer**: `installer\` (setup.nsi for NSIS, app.rc, app.ico, run_star_term.bat)
 - **Dependencies**: Qt6 (Widgets/Gui/Core/Network), libssh2 + OpenSSL + zlib via **vcpkg manifest mode** (vcpkg.json in project root)
 
 ## Toolchain (working configuration)
@@ -49,7 +53,7 @@ Build:
 cmake --build build --config Release
 ```
 - Multi-config generator: `--config Release` is required or you get a Debug build in build\Debug.
-- Exe output: `build\Release\star_term_cpp.exe`
+- Exe output: `build\Release\star_term.exe`
 - Source or CMakeLists edits → just rebuild. Delete `build\` only when changing
   generator/toolset/Qt paths or when the cache is corrupted (`rmdir /s /q build`).
 - Harmless noise: many MSB8064/MSB8065 warnings about lowercase dependency paths
@@ -58,7 +62,7 @@ cmake --build build --config Release
 
 Deploy Qt runtime next to exe (required after Qt version changes, not after source edits):
 ```bat
-C:\Qt\6.5.3\msvc2019_64\6.9.3\msvc2022_64\bin\windeployqt.exe --release build\Release\star_term_cpp.exe
+C:\Qt\6.5.3\msvc2019_64\6.9.3\msvc2022_64\bin\windeployqt.exe --release build\Release\star_term.exe
 ```
 
 Copy vcpkg runtime DLLs next to exe (release ones, NOT from debug\bin):
@@ -73,7 +77,7 @@ Build installer:
 cd installer
 "c:\Program Files (x86)\NSIS\makensis.exe" setup.nsi
 ```
-- Output: `installer\Output\star_term_cpp_setup.exe` (the Output dir must exist; NSIS won't create it).
+- Output: `installer\Output\star_term_setup.exe` (the Output dir must exist; NSIS won't create it).
 - Treat any "warning 7010: no files found" as a packaging bug, not a warning.
 
 ## Source fixes applied during this session (all in repo now)
@@ -124,7 +128,7 @@ cd installer
   SetOutPath "$INSTDIR"
   File /r /x *.pdb /x *.lib /x *.exp "..\build\Release\*.*"
   File "app.ico"
-  File "run_star_term_cpp.bat"
+  File "run_star_term.bat"
   ```
 - Stale names from the old list, for reference: `styles\qwindowsvistastyle.dll` no longer exists
   in Qt 6.9 (it's `qmodernwindowsstyle.dll`); zlib here is `z.dll`.
@@ -133,7 +137,7 @@ cd installer
 
 ## Standard iteration loops
 
-- **Code change** → `cmake --build build --config Release` → run `build\Release\star_term_cpp.exe` (folder is self-contained) → repeat. Only the exe changes; DLLs stay valid.
+- **Code change** → `cmake --build build --config Release` → run `build\Release\star_term.exe` (folder is self-contained) → repeat. Only the exe changes; DLLs stay valid.
 - **Qt/vcpkg version change** → delete build, reconfigure, rebuild, re-run windeployqt, recopy vcpkg DLLs.
 - **Ship** → makensis on setup.nsi (packages build\Release wholesale).
 
@@ -141,7 +145,7 @@ cd installer
 
 - Crash triage: Event Viewer → Windows Logs → Application → Error entry shows faulting module
   + exception code (e.g., this session: libssh2.dll + 0xc0000005 → use-after-free in our code).
-- `dumpbin /dependents build\Release\star_term_cpp.exe` (VS dev prompt) lists true DLL deps.
-- Open `build\star_term_cpp.slnx` in VS and F5 for a debugger with real stacks.
+- `dumpbin /dependents build\Release\star_term.exe` (VS dev prompt) lists true DLL deps.
+- Open `build\star_term.slnx` in VS and F5 for a debugger with real stacks.
 - App logs via debugLog() — run the exe from a terminal to see output.
 - Beware relative paths: `installer\` is a sibling of `build\`, so from installer\ use `..\build\...`.
