@@ -3,7 +3,7 @@
 > Purpose: give Claude Code (and future humans) full context on the Windows build environment,
 > its quirks, and every fix applied while getting the app to build, run, and package.
 >
-> **Updated 2026-08-07:** target/file names re-verified against the tree. The CMake target
+> **Updated 2026-08-18:** target/file names re-verified against the tree. The CMake target
 > is `star_term` (not `star_term_cpp`); artifacts are `star_term.exe`, `run_star_term.bat`,
 > and `star_term_setup.exe`. `README.md` has been brought in line with these notes.
 
