@@ -189,6 +189,10 @@ constexpr int kRowPad    = 4;
 constexpr int kGap       = 6;
 constexpr int kCancelW   = 16;
 
+// How many transfers may run at once. Downloads started separately are
+// expected to run alongside each other, not queue behind one another.
+constexpr int kMaxConcurrentDownloads = 2;
+
 // Geometry helpers, shared by paint() and the click handler so a hit test can
 // never disagree with what was drawn.
 int percentWidth(const QFontMetrics &fm) { return fm.horizontalAdvance("100%") + 4; }
@@ -956,51 +960,59 @@ void RemoteFileBrowser::onDownloadDialog(const QStringList &names) {
         for (const QString &name : names)
             pairs << qMakePair(name, dir + "/" + name);
     }
-    m_downloadQueue  = pairs;
-    m_downloadTotal  = pairs.size();
-    m_downloadIndex  = 0;
-    buildProgressRows(pairs);
-    startNextDownload();
+    // Append to whatever is already running rather than replacing it.
+    const QList<QListWidgetItem*> rows = appendProgressRows(pairs);
+    for (int i = 0; i < pairs.size(); ++i)
+        m_downloadQueue.append({ pairs[i].first, pairs[i].second, rows[i] });
+    pumpDownloads();
 }
 
 // One row per queued file: name on the left, its own bar beneath. Rows are
 // created up front so the whole queue is visible from the start rather than
 // appearing one at a time.
-void RemoteFileBrowser::buildProgressRows(const QList<QPair<QString,QString>> &pairs) {
-    clearProgressRows();
+// Append rows for a new batch. Deliberately does NOT clear: a download started
+// while another is still running must add to the list, not replace it. Clearing
+// here was why two concurrent downloads shared a single row.
+QList<QListWidgetItem*> RemoteFileBrowser::appendProgressRows(
+        const QList<QPair<QString,QString>> &pairs) {
+    QList<QListWidgetItem*> rows;
     for (const auto &pair : pairs) {
         QListWidgetItem *item = new QListWidgetItem(pair.first, m_progressList);
         item->setToolTip(pair.second);                  // full destination path
         item->setData(DownloadPercentRole, 0);
         item->setData(DownloadStatusRole, QString("Queued"));
         item->setData(DownloadActiveRole, true);
-        m_progressItems.append(item);
+        rows.append(item);
     }
-    m_progressList->setVisible(!m_progressItems.isEmpty());
+    const bool any = m_progressList->count() > 0;
+    m_progressList->setVisible(any);
     m_cancelBtn->setEnabled(true);
-    m_cancelBtn->setVisible(!m_progressItems.isEmpty());
+    m_cancelBtn->setVisible(any);
+    return rows;
 }
 
 // Stop the queue: drop anything not started, ask the running transfer to abort
 // (it deletes its own partial file), and leave the rows up so it is clear where
 // the download stopped.
+// Stop everything: drop the whole queue and ask every running transfer to abort.
 void RemoteFileBrowser::cancelDownloads() {
+    for (const PendingDownload &d : m_downloadQueue)
+        setRowState(d.row, -1, "Cancelled", false);
     m_downloadQueue.clear();
     m_cancelBtn->setEnabled(false);
-    if (m_activeDownload) {
-        m_activeDownload->cancel();   // onDownloadCancelled() finishes the cleanup
-        return;
+
+    const QList<SFTPWorker*> running = m_activeRows.keys();
+    for (SFTPWorker *w : running) {
+        setRowState(m_activeRows.value(w), -1, "Stopping...", false);
+        w->cancel();               // each reports back via onDownloadCancelled()
     }
-    // Nothing in flight (fsMode copies are synchronous) — tidy up here instead.
-    const int idx = m_downloadIndex - 1;
-    for (int i = idx + 1; i < m_progressItems.size(); ++i)
-        setRowState(i, -1, "Cancelled", false);
-    m_cancelBtn->setVisible(false);
-    m_statusLabel->setText("Download stopped");
+    if (running.isEmpty()) {
+        m_cancelBtn->setVisible(false);
+        m_statusLabel->setText("Download stopped");
+    }
 }
 
 void RemoteFileBrowser::clearProgressRows() {
-    m_progressItems.clear();
     if (m_progressList) {
         m_progressList->clear();       // owns and destroys its items
         m_progressList->setVisible(false);
@@ -1010,34 +1022,38 @@ void RemoteFileBrowser::clearProgressRows() {
 
 // Set a row's bar and the text drawn beside it. Percent < 0 leaves it unchanged.
 // active == false drops the cancel glyph, for rows that have finished one way or another.
-void RemoteFileBrowser::setRowState(int index, int percent, const QString &status, bool active) {
-    if (index < 0 || index >= m_progressItems.size()) return;
-    QListWidgetItem *item = m_progressItems[index];
-    if (percent >= 0) item->setData(DownloadPercentRole, percent);
-    item->setData(DownloadStatusRole, status);
-    item->setData(DownloadActiveRole, active);
+// Set a row's bar and the text drawn beside it. Percent < 0 leaves it unchanged.
+// active == false drops the cancel glyph, for rows that have finished somehow.
+void RemoteFileBrowser::setRowState(QListWidgetItem *row, int percent,
+                                    const QString &status, bool active) {
+    if (!row) return;
+    if (percent >= 0) row->setData(DownloadPercentRole, percent);
+    row->setData(DownloadStatusRole, status);
+    row->setData(DownloadActiveRole, active);
 }
 
-bool RemoteFileBrowser::rowCancelled(int row) const {
-    if (row < 0 || row >= m_progressItems.size()) return false;
-    return m_progressItems[row]->data(DownloadStatusRole).toString() == "Cancelled";
+bool RemoteFileBrowser::rowCancelled(QListWidgetItem *row) const {
+    return row && row->data(DownloadStatusRole).toString() == "Cancelled";
 }
 
 // Cancel one file. The row index is the original queue position, which stays
 // fixed; the queue itself is left intact and cancelled rows are skipped when
 // their turn arrives, so row and queue positions cannot drift apart.
+// Cancel one file. If it is running, ask its worker to stop — it deletes its own
+// partial and reports back. If it is only queued, marking the row is enough:
+// pumpDownloads() steps over cancelled rows when their turn arrives.
 void RemoteFileBrowser::cancelRow(int row) {
-    if (row < 0 || row >= m_progressItems.size()) return;
-    const int active = m_downloadIndex - 1;
-    if (row < active) return;                     // already finished
+    QListWidgetItem *item = m_progressList->item(row);
+    if (!item) return;
 
-    if (row == active) {
-        // In flight — the worker deletes its own partial file and reports back.
-        setRowState(row, 0, "Cancelled", false);
-        if (m_activeDownload) m_activeDownload->cancel();
-        return;
+    for (auto it = m_activeRows.cbegin(); it != m_activeRows.cend(); ++it) {
+        if (it.value() == item) {
+            setRowState(item, -1, "Stopping...", false);
+            it.key()->cancel();
+            return;
+        }
     }
-    setRowState(row, -1, "Cancelled", false);     // still queued; skipped later
+    setRowState(item, -1, "Cancelled", false);
 }
 
 void RemoteFileBrowser::onUploadRequested(const QStringList &localPaths) {
@@ -1066,100 +1082,87 @@ void RemoteFileBrowser::onUploadRequested(const QStringList &localPaths) {
     }
 }
 
-void RemoteFileBrowser::startNextDownload() {
-    // Rows cancelled individually stay in the queue but are stepped over here,
-    // so a row's index always matches its original position.
-    QString name, localPath;
-    for (;;) {
-        if (m_downloadQueue.isEmpty()) {
-            if (m_downloadIndex >= 1 && !rowCancelled(m_downloadIndex - 1))
-                setRowState(m_downloadIndex - 1, 100, "Done", false);
-            clearProgressRows();
-            refresh();
-            return;
-        }
-        auto pair = m_downloadQueue.takeFirst();
-        ++m_downloadIndex;
-        if (m_downloadIndex >= 2 && !rowCancelled(m_downloadIndex - 2))
-            setRowState(m_downloadIndex - 2, 100, "Done", false);
-        if (!rowCancelled(m_downloadIndex - 1)) {
-            name      = pair.first;
-            localPath = pair.second;
-            break;
-        }
-    }
-    QString remotePath = m_currentPath + "/" + name;
-    const int curRow = m_downloadIndex - 1;
-    if (curRow >= 0 && curRow < m_progressItems.size()) {
-        setRowState(curRow, 0, "0%");
-        m_progressList->scrollToItem(m_progressItems[curRow]);
-    }
-    if (m_downloadTotal > 1)
-        m_statusLabel->setText(QString("Downloading %1 (%2/%3)...").arg(name).arg(m_downloadIndex).arg(m_downloadTotal));
-    else
-        m_statusLabel->setText(QString("Downloading %1...").arg(name));
+// Start whatever the concurrency limit allows, then tidy up if nothing is left.
+// Each started transfer records the row it owns in m_activeRows, so its progress
+// can never be written to another download's row.
+void RemoteFileBrowser::pumpDownloads() {
+    while (m_activeRows.size() < kMaxConcurrentDownloads && !m_downloadQueue.isEmpty()) {
+        const PendingDownload d = m_downloadQueue.takeFirst();
+        if (rowCancelled(d.row)) continue;          // cancelled while it waited
 
-    if (fsMode()) {
-        const QString src = fsPathFor(m_currentPath) + "/" + name;
-        // The save dialog already confirmed any overwrite.
-        if (QFile::exists(localPath)) QFile::remove(localPath);
-        if (QFile::copy(src, localPath)) onDownloadFinished(QString(), localPath);
-        else onDownloadError(QString("Could not copy %1").arg(name));
-        return;
+        setRowState(d.row, 0, "0%");
+        m_progressList->scrollToItem(d.row);
+        m_statusLabel->setText(QString("Downloading %1...").arg(d.name));
+
+        if (fsMode()) {
+            // WSL share: an ordinary copy, synchronous, so it finishes here.
+            const QString src = fsPathFor(m_currentPath) + "/" + d.name;
+            if (QFile::exists(d.localPath)) QFile::remove(d.localPath);
+            if (QFile::copy(src, d.localPath)) {
+                setRowState(d.row, 100, "Done", false);
+            } else {
+                setRowState(d.row, -1, "Failed", false);
+                onError(QString("Could not copy %1").arg(d.name));
+            }
+            continue;
+        }
+
+        const QString remotePath = m_currentPath + "/" + d.name;
+        SFTPWorker *w = new SFTPWorker(m_session, m_sftp, m_sessionLock,
+                                       remotePath, d.localPath, true, this);
+        connect(w, &SFTPWorker::progress,    this, &RemoteFileBrowser::onDownloadProgress);
+        connect(w, &SFTPWorker::transferred, this, &RemoteFileBrowser::onDownloadFinished);
+        connect(w, &SFTPWorker::error,       this, &RemoteFileBrowser::onDownloadError);
+        connect(w, &SFTPWorker::cancelled,   this, &RemoteFileBrowser::onDownloadCancelled);
+        m_activeRows.insert(w, d.row);
+        runWorker(w);
     }
 
-    SFTPWorker *w = new SFTPWorker(m_session, m_sftp, m_sessionLock, remotePath, localPath, true, this);
-    connect(w, &SFTPWorker::progress,    this, &RemoteFileBrowser::onDownloadProgress);
-    connect(w, &SFTPWorker::transferred, this, &RemoteFileBrowser::onDownloadFinished);
-    connect(w, &SFTPWorker::error,       this, &RemoteFileBrowser::onDownloadError);
-    connect(w, &SFTPWorker::cancelled,   this, &RemoteFileBrowser::onDownloadCancelled);
-    m_activeDownload = w;
-    runWorker(w);
+    if (m_downloadQueue.isEmpty() && m_activeRows.isEmpty()) {
+        clearProgressRows();
+        m_statusLabel->setText(QString());
+        refresh();
+    }
 }
 
 void RemoteFileBrowser::onDownloadProgress(qint64 done, qint64 total) {
     if (total <= 0) return;
-    const int idx = m_downloadIndex - 1;
+    QListWidgetItem *row = m_activeRows.value(qobject_cast<SFTPWorker*>(sender()));
+    if (!row) return;
     const int pct = static_cast<int>(done * 100 / total);
-    setRowState(idx, pct, QString("%1%").arg(pct));
+    setRowState(row, pct, QString("%1%").arg(pct));
 }
 
 void RemoteFileBrowser::onDownloadFinished(const QString&, const QString&) {
-    m_activeDownload = nullptr;
-    startNextDownload();
+    if (QListWidgetItem *row = m_activeRows.take(qobject_cast<SFTPWorker*>(sender())))
+        setRowState(row, 100, "Done", false);
+    pumpDownloads();
 }
 
+// One file failed. The rest of the queue is left alone — a single unreadable
+// file should not silently abandon everything else the user asked for.
 void RemoteFileBrowser::onDownloadError(const QString &message) {
-    m_activeDownload = nullptr;
-    m_downloadQueue.clear();
-    // Leave the rows up so it stays visible which file failed; mark the rest
-    // abandoned rather than silently vanishing mid-queue.
-    const int idx = m_downloadIndex - 1;
-    for (int i = idx; i < m_progressItems.size(); ++i)
-        setRowState(i, -1, i == idx ? "Failed" : "Cancelled", false);
-    m_cancelBtn->setVisible(false);
+    if (QListWidgetItem *row = m_activeRows.take(qobject_cast<SFTPWorker*>(sender())))
+        setRowState(row, -1, "Failed", false);
     onError(message);
+    pumpDownloads();
 }
 
 // The worker aborted mid-transfer and has already removed its partial file.
+// The worker aborted mid-transfer and has already removed its partial file.
 void RemoteFileBrowser::onDownloadCancelled(const QString&) {
-    m_activeDownload = nullptr;
-    m_downloadQueue.clear();
-    const int idx = m_downloadIndex - 1;
-    for (int i = idx; i < m_progressItems.size(); ++i)
-        setRowState(i, i == idx ? 0 : -1, "Cancelled", false);
-    m_cancelBtn->setVisible(false);
-    m_statusLabel->setText("Download stopped");
-    refresh();
+    if (QListWidgetItem *row = m_activeRows.take(qobject_cast<SFTPWorker*>(sender())))
+        setRowState(row, 0, "Cancelled", false);
+    pumpDownloads();
 }
 
 void RemoteFileBrowser::runWorker(SFTPWorker *worker) {
     m_workers.append(worker);
     connect(worker, &SFTPWorker::finished, this, [this, worker]() {
         m_workers.removeAll(worker);
-        // The transfer slots normally clear this first; belt-and-braces so the
-        // pointer can never outlive the thread it refers to.
-        if (m_activeDownload == worker) m_activeDownload = nullptr;
+        // The transfer slots normally take this out first; belt-and-braces so a
+        // row can never stay mapped to a thread that has gone away.
+        m_activeRows.remove(worker);
         worker->deleteLater();
     });
     worker->start();
