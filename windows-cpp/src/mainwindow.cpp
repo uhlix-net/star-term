@@ -67,9 +67,13 @@ static const QString APP_VERSION = "0.7.1";
 static const QString UPDATE_HISTORY = R"(Version 0.7.1
 
 - Download and upload dialogs now open in your Downloads folder instead of the Star Term installation directory
-- A file download can now be stopped while it is running, and any partially downloaded file is deleted
-- Each file in a multi-file download now has its own progress bar instead of sharing one
+- Each file being downloaded now has its own progress bar, showing its name, percentage and a control to stop just that file
+- Downloads started separately now run alongside each other, each tracked on its own line, instead of sharing a single progress bar
+- A download can be stopped while it is running, either one file at a time or the whole queue at once; any partially downloaded file is deleted, while files that already finished are kept
+- A file that fails to download no longer cancels the rest of the queue
+- Follow Current Directory in the remote file browser is now a checkbox, so its on/off state is readable without knowing what the button colours meant
 - A remote host whose key no longer matches the one already trusted is now reported as a possible impersonation, instead of being presented like a first-time connection; accepting the change now replaces the stored key rather than adding a second one
+- An expired 30-day trial can be restarted from the dialog shown at startup. This is a pre-release convenience and is expected to be removed in the 1.0 release
 
 Version 0.7.0
 
