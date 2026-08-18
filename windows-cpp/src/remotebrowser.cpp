@@ -307,10 +307,14 @@ void SFTPWorker::run() {
                 return;
             }
 
-            qint64 done = 0;
-            bool   ok   = true;
+            qint64 done      = 0;
+            bool   ok        = true;
+            bool   wasCancelled = false;
             char   buf[32768];
             while (ok) {
+                // Checked between chunks so a cancel takes effect within one
+                // read rather than waiting for the whole file.
+                if (m_cancelled.loadRelaxed()) { wasCancelled = true; break; }
                 ssize_t nread;
                 {
                     QMutexLocker lock(m_sessionLock);
@@ -330,8 +334,13 @@ void SFTPWorker::run() {
                 libssh2_sftp_close(handle);
             }
             localFile.close();
-            if (ok) emit transferred("download", m_localPath);
-            else    emit error(QString("Read error downloading: %1").arg(m_remotePath));
+            if (wasCancelled) {
+                // A half-written file is worse than none — drop it.
+                localFile.remove();
+                emit cancelled(m_localPath);
+            }
+            else if (ok) emit transferred("download", m_localPath);
+            else         emit error(QString("Read error downloading: %1").arg(m_remotePath));
         }
     } catch (...) {
         emit error("SFTP operation failed");
@@ -522,6 +531,10 @@ RemoteFileBrowser::RemoteFileBrowser(QWidget *parent) : QWidget(parent) {
     m_progressArea->setMaximumHeight(160);
     m_progressArea->setVisible(false);
 
+    m_cancelBtn = new QPushButton("Stop Download");
+    m_cancelBtn->setVisible(false);
+    connect(m_cancelBtn, &QPushButton::clicked, this, &RemoteFileBrowser::cancelDownloads);
+
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(8,8,8,8);
     layout->setSpacing(8);
@@ -531,6 +544,7 @@ RemoteFileBrowser::RemoteFileBrowser(QWidget *parent) : QWidget(parent) {
     layout->addWidget(m_statusLabel);
     layout->addWidget(m_followBtn);
     layout->addWidget(m_progressArea);
+    layout->addWidget(m_cancelBtn);
 
     setEnabled(false);
 }
@@ -821,16 +835,45 @@ void RemoteFileBrowser::buildProgressRows(const QList<QPair<QString,QString>> &p
         m_progressBars.append(bar);
     }
     m_progressArea->setVisible(!m_progressBars.isEmpty());
+    m_cancelBtn->setEnabled(true);
+    m_cancelBtn->setVisible(!m_progressBars.isEmpty());
+}
+
+// Stop the queue: drop anything not started, ask the running transfer to abort
+// (it deletes its own partial file), and leave the rows up so it is clear where
+// the download stopped.
+void RemoteFileBrowser::cancelDownloads() {
+    m_downloadQueue.clear();
+    m_cancelBtn->setEnabled(false);
+    if (m_activeDownload) {
+        m_activeDownload->cancel();   // onDownloadCancelled() finishes the cleanup
+        return;
+    }
+    // Nothing in flight (fsMode copies are synchronous) — tidy up here instead.
+    const int idx = m_downloadIndex - 1;
+    for (int i = idx + 1; i < m_progressBars.size(); ++i)
+        m_progressBars[i]->setFormat("Cancelled");
+    m_cancelBtn->setVisible(false);
+    m_statusLabel->setText("Download stopped");
 }
 
 void RemoteFileBrowser::clearProgressRows() {
     m_progressBars.clear();
     if (!m_progressLayout) return;
     while (QLayoutItem *item = m_progressLayout->takeAt(0)) {
-        if (QWidget *w = item->widget()) w->deleteLater();
+        if (QWidget *w = item->widget()) {
+            // takeAt() only detaches from the layout — the widget stays a child of
+            // the panel, keeps its old geometry and stays visible. deleteLater()
+            // alone therefore leaves the previous batch's rows on screen until the
+            // event loop runs, and the next batch draws straight over them.
+            // Reparenting hides it immediately; deletion can still be deferred.
+            w->setParent(nullptr);
+            w->deleteLater();
+        }
         delete item;
     }
     if (m_progressArea) m_progressArea->setVisible(false);
+    if (m_cancelBtn)    m_cancelBtn->setVisible(false);
 }
 
 void RemoteFileBrowser::onUploadRequested(const QStringList &localPaths) {
@@ -899,6 +942,8 @@ void RemoteFileBrowser::startNextDownload() {
     connect(w, &SFTPWorker::progress,    this, &RemoteFileBrowser::onDownloadProgress);
     connect(w, &SFTPWorker::transferred, this, &RemoteFileBrowser::onDownloadFinished);
     connect(w, &SFTPWorker::error,       this, &RemoteFileBrowser::onDownloadError);
+    connect(w, &SFTPWorker::cancelled,   this, &RemoteFileBrowser::onDownloadCancelled);
+    m_activeDownload = w;
     runWorker(w);
 }
 
@@ -910,23 +955,43 @@ void RemoteFileBrowser::onDownloadProgress(qint64 done, qint64 total) {
 }
 
 void RemoteFileBrowser::onDownloadFinished(const QString&, const QString&) {
+    m_activeDownload = nullptr;
     startNextDownload();
 }
 
 void RemoteFileBrowser::onDownloadError(const QString &message) {
+    m_activeDownload = nullptr;
     m_downloadQueue.clear();
     // Leave the rows up so it stays visible which file failed; mark the rest
     // abandoned rather than silently vanishing mid-queue.
     const int idx = m_downloadIndex - 1;
     for (int i = idx; i < m_progressBars.size(); ++i)
         m_progressBars[i]->setFormat(i == idx ? "Failed" : "Cancelled");
+    m_cancelBtn->setVisible(false);
     onError(message);
+}
+
+// The worker aborted mid-transfer and has already removed its partial file.
+void RemoteFileBrowser::onDownloadCancelled(const QString&) {
+    m_activeDownload = nullptr;
+    m_downloadQueue.clear();
+    const int idx = m_downloadIndex - 1;
+    for (int i = idx; i < m_progressBars.size(); ++i) {
+        if (i == idx) m_progressBars[i]->setValue(0);
+        m_progressBars[i]->setFormat("Cancelled");
+    }
+    m_cancelBtn->setVisible(false);
+    m_statusLabel->setText("Download stopped");
+    refresh();
 }
 
 void RemoteFileBrowser::runWorker(SFTPWorker *worker) {
     m_workers.append(worker);
     connect(worker, &SFTPWorker::finished, this, [this, worker]() {
         m_workers.removeAll(worker);
+        // The transfer slots normally clear this first; belt-and-braces so the
+        // pointer can never outlive the thread it refers to.
+        if (m_activeDownload == worker) m_activeDownload = nullptr;
         worker->deleteLater();
     });
     worker->start();

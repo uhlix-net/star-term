@@ -62,9 +62,16 @@
 #include <QTimer>
 #include <QUrl>
 
-static const QString APP_VERSION = "0.7.0";
+static const QString APP_VERSION = "0.7.1";
 
-static const QString UPDATE_HISTORY = R"(Version 0.7.0
+static const QString UPDATE_HISTORY = R"(Version 0.7.1
+
+- Download and upload dialogs now open in your Downloads folder instead of the Star Term installation directory
+- A file download can now be stopped while it is running, and any partially downloaded file is deleted
+- Each file in a multi-file download now has its own progress bar instead of sharing one
+- A remote host whose key no longer matches the one already trusted is now reported as a possible impersonation, instead of being presented like a first-time connection; accepting the change now replaces the stored key rather than adding a second one
+
+Version 0.7.0
 
 - Session tabs can be dragged into any order, and the order carries over to the Multi-Exec grid
 - Installing an update from within the app now runs the installer silently and relaunches Star Term when it finishes
