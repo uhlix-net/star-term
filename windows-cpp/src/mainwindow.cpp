@@ -62,9 +62,16 @@
 #include <QTimer>
 #include <QUrl>
 
-static const QString APP_VERSION = "0.7.1";
+static const QString APP_VERSION = "0.7.2";
 
-static const QString UPDATE_HISTORY = R"(Version 0.7.1
+static const QString UPDATE_HISTORY = R"(Version 0.7.2
+
+- The light theme is now plain neutral grey instead of blue-tinted, with blue kept for selected items, focus outlines and pressed buttons
+- Saved sessions have new icons: SSH sessions show a terminal tile, RDP sessions a monitor, so the two are told apart by shape as well as colour
+- Folders in the saved-sessions list now match the size of the sessions inside them
+- All icons are drawn at the resolution your display actually uses, so they are no longer soft or blurry at 150%, 200% or 300% Windows scaling
+
+Version 0.7.1
 
 - Download and upload dialogs now open in your Downloads folder instead of the Star Term installation directory
 - Each file being downloaded now has its own progress bar, showing its name, percentage and a control to stop just that file
