@@ -2,6 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
   "name": "star-term-cpp",
   "version": "1.0.0",
+  "builtin-baseline": "46c9f8d8398360278222d335c28bceb776ebb61f",
   "dependencies": [
     {
       "name": "libssh2",
