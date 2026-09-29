@@ -352,7 +352,13 @@ void SSHSession::run() {
     if (rc) {
         char *errmsg = nullptr;
         libssh2_session_last_error(m_session, &errmsg, nullptr, 0);
-        emitError(QString("Authentication failed: %1").arg(errmsg ? errmsg : ""));
+        QString detail = QString("Authentication failed: %1").arg(errmsg ? errmsg : "");
+        // Star Term no longer prompts for a key passphrase on connect, so say
+        // where to put one rather than leaving a protected key looking broken.
+        if (!m_keyPath.isEmpty() && m_keyPassphrase.isEmpty())
+            detail += "\nIf this key is passphrase-protected, add the passphrase "
+                      "to the session profile (Edit > SSH Options > Key passphrase).";
+        emitError(detail);
         libssh2_session_disconnect(m_session, "Auth failed");
         libssh2_session_free(m_session); m_session = nullptr;
         closeSocket();

@@ -26,6 +26,7 @@ set(SOURCES
     src/theme.cpp
     src/icons.cpp
     src/licensing.cpp
+    src/secretstore.cpp
     src/vt100.cpp
     src/terminalwidget.cpp
     src/sshsession.cpp
@@ -38,7 +39,6 @@ set(SOURCES
     src/sessionpane.cpp
     src/sidebar.cpp
     src/remotebrowser.cpp
-    src/connectiondialog.cpp
     src/preferencesdialog.cpp
     src/licensedialog.cpp
     src/macrospanel.cpp
@@ -53,6 +53,8 @@ set(HEADERS
     src/theme.h
     src/icons.h
     src/licensing.h
+    src/secretstore.h
+    src/sessiondialog.h
     src/vt100.h
     src/terminalwidget.h
     src/terminalsession.h
@@ -66,7 +68,6 @@ set(HEADERS
     src/sessionpane.h
     src/sidebar.h
     src/remotebrowser.h
-    src/connectiondialog.h
     src/preferencesdialog.h
     src/licensedialog.h
     src/macrospanel.h
@@ -105,7 +106,8 @@ target_link_libraries(star_term PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(star_term PRIVATE ws2_32 Qt6::AxContainer)
+    # crypt32: DPAPI (CryptProtectData) for stored SSH key passphrases.
+    target_link_libraries(star_term PRIVATE ws2_32 crypt32 Qt6::AxContainer)
 endif()
 
 # After each Windows build: deploy Qt runtime DLLs and copy vcpkg DLLs next
