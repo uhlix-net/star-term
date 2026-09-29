@@ -62,10 +62,11 @@
 #include <QTimer>
 #include <QUrl>
 
-static const QString APP_VERSION = "0.7.2";
+static const QString APP_VERSION = "0.8.0";
 
-static const QString UPDATE_HISTORY = R"(Version 0.7.2
+static const QString UPDATE_HISTORY = R"(Version 0.8.0
 
+- Security: the bundled SSH library is patched against three flaws that a malicious or impersonated server could trigger on connection, before you log in. The most serious allowed memory corruption on your machine (CVE-2026-55200, CVE-2026-58050, CVE-2026-55199)
 - The light theme is now plain neutral grey instead of blue-tinted, with blue kept for selected items, focus outlines and pressed buttons
 - Saved sessions have new icons: SSH sessions show a terminal tile, RDP sessions a monitor, so the two are told apart by shape as well as colour
 - Folders in the saved-sessions list now match the size of the sessions inside them
