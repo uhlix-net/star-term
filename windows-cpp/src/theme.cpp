@@ -11,7 +11,9 @@
 // -----------------------------------------------------------------------
 // Palette derived from uhlix.net/product/star-term/ site design.
 // Dark: deep navy bg + electric cyan accent (#00d9ff from --accent).
-// Light: blue-white bg + darker cyan for legible contrast on white.
+// Light: deliberately NOT a tinted complement of the dark theme — plain
+// neutral grays in the Windows light-mode idiom, with blue reserved for
+// selection/focus/pressed states only.
 static ThemeColors DARK_COLORS = {
     "#0a0e17",  // BG            -- site --bg
     "#0d1220",  // PANEL_BG      -- site --bg-alt
@@ -34,24 +36,24 @@ static ThemeColors DARK_COLORS = {
 };
 
 static ThemeColors LIGHT_COLORS = {
-    "#f0f4fa",  // BG            -- light blue-white complement of site navy
+    "#f3f3f3",  // BG            -- neutral window gray, no color cast
     "#ffffff",  // PANEL_BG
-    "#e4ecf7",  // ELEVATED_BG
-    "#beccdf",  // BORDER
-    "#0d1220",  // TEXT          -- site bg color repurposed as dark text
-    "#4a5a78",  // MUTED_TEXT
-    "#007a99",  // ACCENT        -- cyan darkened for 5:1 contrast on white
-    "#005f7a",  // ACCENT_HOVER
-    "#c2e0f0",  // SELECTION     -- light cyan
+    "#fafafa",  // ELEVATED_BG   -- menus / toolbars, a hair above the window
+    "#d4d4d4",  // BORDER        -- neutral gray rules
+    "#1a1a1a",  // TEXT          -- near-black, ~15:1 on the window gray
+    "#6b6b6b",  // MUTED_TEXT    -- ~4.9:1 on the window gray
+    "#0067c0",  // ACCENT        -- standard blue; white text on it is ~5.6:1
+    "#005a9e",  // ACCENT_HOVER  -- focus rings / selected tab underline
+    "#cce4f7",  // SELECTION     -- conventional light selection fill
     "#ffffff",  // INPUT_BG
-    "#dde6f5",  // BUTTON_BG
-    "#c8d8ef",  // BUTTON_HOVER_BG
-    "#007a99",  // BUTTON_HOVER_BORDER
-    "#eaeff8",  // DISABLED_BG
-    "#d8eaf8",  // ITEM_HOVER_BG
-    "#b0c4dc",  // SCROLLBAR_HANDLE
-    "#007a99",  // SCROLLBAR_HANDLE_HOVER
-    "#b3202f",  // ERROR_TEXT    -- red darkened for contrast on white
+    "#fdfdfd",  // BUTTON_BG
+    "#f0f0f0",  // BUTTON_HOVER_BG
+    "#b3b3b3",  // BUTTON_HOVER_BORDER -- gray, so hover reads as depth not color
+    "#ebebeb",  // DISABLED_BG
+    "#ededed",  // ITEM_HOVER_BG
+    "#c4c4c4",  // SCROLLBAR_HANDLE
+    "#a0a0a0",  // SCROLLBAR_HANDLE_HOVER
+    "#c42b1c",  // ERROR_TEXT    -- standard error red, legible on white
 };
 
 // -----------------------------------------------------------------------
