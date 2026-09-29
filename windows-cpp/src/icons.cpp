@@ -1,6 +1,8 @@
 #include "icons.h"
 
 #include <QApplication>
+#include <QCoreApplication>
+#include <QHash>
 #include <QPainter>
 #include <QPolygonF>
 #include <QPointF>
@@ -11,99 +13,140 @@
 using namespace Icons;
 
 // -----------------------------------------------------------------------
-// Helpers
+// Rendering helper
+//
+// Each icon is a draw function that paints into a square of edge length
+// `s`, with every coordinate expressed as a fraction of `s`. makeIcon()
+// runs it three times — at 1x, 2x and 3x the requested size — and adds all
+// three to the QIcon. Qt then picks the pixmap matching the current
+// device pixel ratio, so the icon stays sharp at 150%, 200% and 300%
+// Windows scaling instead of being a stretched 16px bitmap.
 // -----------------------------------------------------------------------
-static QPixmap makePixmap(int size) {
-    QPixmap pm(size, size);
-    pm.fill(Qt::transparent);
-    return pm;
+using DrawFn = void (*)(QPainter &, qreal);
+
+static QHash<QString, QIcon> s_iconCache;
+
+// The cache holds pixmaps, which must not outlive QApplication — drop them
+// while it is still being torn down rather than at static destruction time.
+static void releaseIconCache() { s_iconCache.clear(); }
+
+static QIcon makeIcon(const char *key, int size, DrawFn draw) {
+    const QString cacheKey = QString::asprintf("%s@%d", key, size);
+    auto cached = s_iconCache.constFind(cacheKey);
+    if (cached != s_iconCache.constEnd()) return *cached;
+
+    static bool cleanupRegistered = false;
+    if (!cleanupRegistered) {
+        qAddPostRoutine(releaseIconCache);
+        cleanupRegistered = true;
+    }
+
+    QIcon icon;
+    for (int scale : {1, 2, 3}) {
+        const int px = size * scale;
+        QPixmap pm(px, px);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        draw(p, static_cast<qreal>(px));
+        p.end();
+        icon.addPixmap(pm);
+    }
+    s_iconCache.insert(cacheKey, icon);
+    return icon;
 }
 
 // -----------------------------------------------------------------------
 // connect_icon  — green circle with white play triangle
 // -----------------------------------------------------------------------
-QIcon Icons::connectIcon(int size) {
-    QPixmap pm = makePixmap(size);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
+static void drawConnect(QPainter &p, qreal s) {
     p.setPen(Qt::NoPen);
     p.setBrush(ACCENT_GREEN);
-    p.drawEllipse(QRectF(1, 1, size - 2, size - 2));
+    p.drawEllipse(QRectF(s * 0.04, s * 0.04, s * 0.92, s * 0.92));
     p.setBrush(LIGHT);
     p.drawPolygon(QPolygonF({
-        QPointF(size * 0.36, size * 0.27),
-        QPointF(size * 0.36, size * 0.73),
-        QPointF(size * 0.76, size * 0.5),
+        QPointF(s * 0.36, s * 0.27),
+        QPointF(s * 0.36, s * 0.73),
+        QPointF(s * 0.76, s * 0.5),
     }));
-    p.end();
-    return QIcon(pm);
+}
+
+QIcon Icons::connectIcon(int size) {
+    return makeIcon("connect", size, drawConnect);
 }
 
 // -----------------------------------------------------------------------
 // disconnect_icon  — red circle with white square
 // -----------------------------------------------------------------------
-QIcon Icons::disconnectIcon(int size) {
-    QPixmap pm = makePixmap(size);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
+static void drawDisconnect(QPainter &p, qreal s) {
     p.setPen(Qt::NoPen);
     p.setBrush(ACCENT_RED);
-    p.drawEllipse(QRectF(1, 1, size - 2, size - 2));
+    p.drawEllipse(QRectF(s * 0.04, s * 0.04, s * 0.92, s * 0.92));
     p.setBrush(LIGHT);
-    double s = size * 0.26;
-    p.drawRect(QRectF(size / 2.0 - s / 2.0, size / 2.0 - s / 2.0, s, s));
-    p.end();
-    return QIcon(pm);
+    const qreal side = s * 0.26;
+    p.drawRoundedRect(QRectF(s / 2.0 - side / 2.0, s / 2.0 - side / 2.0, side, side),
+                      s * 0.03, s * 0.03);
+}
+
+QIcon Icons::disconnectIcon(int size) {
+    return makeIcon("disconnect", size, drawDisconnect);
 }
 
 // -----------------------------------------------------------------------
-// multi_exec_icon  — 2×2 grid of blue rounded squares
+// multi_exec_icon  — 2x2 grid of blue rounded squares
 // -----------------------------------------------------------------------
-QIcon Icons::multiExecIcon(int size) {
-    QPixmap pm = makePixmap(size);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
+static void drawMultiExec(QPainter &p, qreal s) {
     p.setPen(Qt::NoPen);
     p.setBrush(ACCENT_BLUE);
-    double gap  = size * 0.1;
-    double cell = (size - 3.0 * gap) / 2.0;
+    const qreal gap  = s * 0.1;
+    const qreal cell = (s - 3.0 * gap) / 2.0;
     for (int row = 0; row < 2; ++row) {
         for (int col = 0; col < 2; ++col) {
-            double x = gap + col * (cell + gap);
-            double y = gap + row * (cell + gap);
-            p.drawRoundedRect(QRectF(x, y, cell, cell), 2, 2);
+            const qreal x = gap + col * (cell + gap);
+            const qreal y = gap + row * (cell + gap);
+            p.drawRoundedRect(QRectF(x, y, cell, cell), s * 0.08, s * 0.08);
         }
     }
-    p.end();
-    return QIcon(pm);
+}
+
+QIcon Icons::multiExecIcon(int size) {
+    return makeIcon("multiexec", size, drawMultiExec);
 }
 
 // -----------------------------------------------------------------------
-// terminal_icon  — dark rounded rect, green ">" prompt, white underline
+// terminal tile  — shared by terminalIcon / sessionsIcon / sshIcon
+//
+// Rounded slate tile, green prompt chevron, light cursor bar. Tuned to
+// stay readable at 16px in the saved-sessions tree: generous corner
+// radius, one chevron rather than a chevron plus an underline, and a
+// solid cursor block instead of a hairline.
 // -----------------------------------------------------------------------
-QIcon Icons::terminalIcon(int size) {
-    QPixmap pm = makePixmap(size);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
+static void drawTerminal(QPainter &p, qreal s) {
     p.setPen(Qt::NoPen);
-    p.setBrush(DARK_BG);
-    p.drawRoundedRect(QRectF(1, 1, size - 2, size - 2), 3, 3);
+    p.setBrush(TERM_TILE);
+    p.drawRoundedRect(QRectF(s * 0.06, s * 0.10, s * 0.88, s * 0.80),
+                      s * 0.19, s * 0.19);
 
-    QPen pen(ACCENT_GREEN);
-    pen.setWidthF(size * 0.1);
+    QPen pen(TERM_PROMPT);
+    pen.setWidthF(s * 0.085);
     pen.setCapStyle(Qt::RoundCap);
     pen.setJoinStyle(Qt::RoundJoin);
     p.setPen(pen);
-    double m    = size * 0.22;
-    double midY = size * 0.5;
-    p.drawLine(QPointF(m, size * 0.32), QPointF(m + size * 0.16, midY));
-    p.drawLine(QPointF(m + size * 0.16, midY), QPointF(m, size * 0.68));
+    p.drawPolyline(QPolygonF({
+        QPointF(s * 0.27, s * 0.36),
+        QPointF(s * 0.43, s * 0.50),
+        QPointF(s * 0.27, s * 0.64),
+    }));
 
-    pen.setColor(LIGHT);
-    p.setPen(pen);
-    p.drawLine(QPointF(size * 0.46, size * 0.68), QPointF(size * 0.78, size * 0.68));
-    p.end();
-    return QIcon(pm);
+    p.setPen(Qt::NoPen);
+    p.setBrush(TERM_CURSOR);
+    p.drawRoundedRect(QRectF(s * 0.50, s * 0.575, s * 0.23, s * 0.085),
+                      s * 0.04, s * 0.04);
+}
+
+QIcon Icons::terminalIcon(int size) {
+    return makeIcon("terminal", size, drawTerminal);
 }
 
 // -----------------------------------------------------------------------
@@ -114,20 +157,24 @@ QIcon Icons::appIcon() {
 }
 
 // -----------------------------------------------------------------------
-// folder_icon
+// folder_icon  — two-tone folder, back sheet + tab + front sheet
 // -----------------------------------------------------------------------
-QIcon Icons::folderIcon(int size) {
-    QPixmap pm = makePixmap(size);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
+static void drawFolder(QPainter &p, qreal s) {
     p.setPen(Qt::NoPen);
+    const qreal r = s * 0.11;
+
+    // Tab and back sheet
     p.setBrush(FOLDER_DARK);
-    p.drawRoundedRect(QRectF(1, size * 0.32, size - 2, size * 0.6), 2, 2);
+    p.drawRoundedRect(QRectF(s * 0.07, s * 0.18, s * 0.40, s * 0.20), r * 0.6, r * 0.6);
+    p.drawRoundedRect(QRectF(s * 0.07, s * 0.26, s * 0.86, s * 0.56), r, r);
+
+    // Front sheet, offset down so the back edge stays visible
     p.setBrush(FOLDER_COLOR);
-    p.drawRoundedRect(QRectF(1, size * 0.22, size * 0.45, size * 0.16), 2, 2);
-    p.drawRoundedRect(QRectF(1, size * 0.34, size - 2, size * 0.56), 2, 2);
-    p.end();
-    return QIcon(pm);
+    p.drawRoundedRect(QRectF(s * 0.07, s * 0.36, s * 0.86, s * 0.46), r, r);
+}
+
+QIcon Icons::folderIcon(int size) {
+    return makeIcon("folder", size, drawFolder);
 }
 
 QIcon Icons::directoryIcon(int size) {
@@ -137,83 +184,79 @@ QIcon Icons::directoryIcon(int size) {
 // -----------------------------------------------------------------------
 // file_icon
 // -----------------------------------------------------------------------
-QIcon Icons::fileIcon(int size) {
-    QPixmap pm = makePixmap(size);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
+static void drawFile(QPainter &p, qreal s) {
     p.setPen(Qt::NoPen);
     p.setBrush(ICON_FG);
-    double fold = size * 0.28;
+    const qreal fold = s * 0.28;
     p.drawPolygon(QPolygonF({
-        QPointF(size * 0.22, size * 0.06),
-        QPointF(size * 0.78 - fold, size * 0.06),
-        QPointF(size * 0.78, size * 0.06 + fold),
-        QPointF(size * 0.78, size * 0.94),
-        QPointF(size * 0.22, size * 0.94),
+        QPointF(s * 0.22, s * 0.06),
+        QPointF(s * 0.78 - fold, s * 0.06),
+        QPointF(s * 0.78, s * 0.06 + fold),
+        QPointF(s * 0.78, s * 0.94),
+        QPointF(s * 0.22, s * 0.94),
     }));
     p.setBrush(ICON_FG_MUTED);
     p.drawPolygon(QPolygonF({
-        QPointF(size * 0.78 - fold, size * 0.06),
-        QPointF(size * 0.78, size * 0.06 + fold),
-        QPointF(size * 0.78 - fold, size * 0.06 + fold),
+        QPointF(s * 0.78 - fold, s * 0.06),
+        QPointF(s * 0.78, s * 0.06 + fold),
+        QPointF(s * 0.78 - fold, s * 0.06 + fold),
     }));
     QPen pen(ICON_FG_MUTED);
-    pen.setWidthF(size * 0.06);
+    pen.setWidthF(s * 0.06);
+    pen.setCapStyle(Qt::RoundCap);
     p.setPen(pen);
     for (int i = 0; i < 3; ++i) {
-        double y = size * (0.45 + i * 0.14);
-        p.drawLine(QPointF(size * 0.32, y), QPointF(size * 0.68, y));
+        const qreal y = s * (0.45 + i * 0.14);
+        p.drawLine(QPointF(s * 0.32, y), QPointF(s * 0.68, y));
     }
-    p.end();
-    return QIcon(pm);
+}
+
+QIcon Icons::fileIcon(int size) {
+    return makeIcon("file", size, drawFile);
 }
 
 // -----------------------------------------------------------------------
 // up_icon
 // -----------------------------------------------------------------------
-QIcon Icons::upIcon(int size) {
-    QPixmap pm = makePixmap(size);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
+static void drawUp(QPainter &p, qreal s) {
     p.setPen(Qt::NoPen);
     p.setBrush(ICON_FG);
     p.drawPolygon(QPolygonF({
-        QPointF(size * 0.5,  size * 0.18),
-        QPointF(size * 0.82, size * 0.55),
-        QPointF(size * 0.62, size * 0.55),
-        QPointF(size * 0.62, size * 0.85),
-        QPointF(size * 0.38, size * 0.85),
-        QPointF(size * 0.38, size * 0.55),
-        QPointF(size * 0.18, size * 0.55),
+        QPointF(s * 0.5,  s * 0.18),
+        QPointF(s * 0.82, s * 0.55),
+        QPointF(s * 0.62, s * 0.55),
+        QPointF(s * 0.62, s * 0.85),
+        QPointF(s * 0.38, s * 0.85),
+        QPointF(s * 0.38, s * 0.55),
+        QPointF(s * 0.18, s * 0.55),
     }));
-    p.end();
-    return QIcon(pm);
+}
+
+QIcon Icons::upIcon(int size) {
+    return makeIcon("up", size, drawUp);
 }
 
 // -----------------------------------------------------------------------
 // refresh_icon
 // -----------------------------------------------------------------------
-QIcon Icons::refreshIcon(int size) {
-    QPixmap pm = makePixmap(size);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
-    QPen pen;
-    pen.setColor(ICON_FG);
-    pen.setWidthF(size * 0.12);
+static void drawRefresh(QPainter &p, qreal s) {
+    QPen pen(ICON_FG);
+    pen.setWidthF(s * 0.12);
     pen.setCapStyle(Qt::RoundCap);
     p.setPen(pen);
     p.setBrush(Qt::NoBrush);
-    QRectF rect(size * 0.18, size * 0.18, size * 0.64, size * 0.64);
-    p.drawArc(rect, 30 * 16, 280 * 16);
+    p.drawArc(QRectF(s * 0.18, s * 0.18, s * 0.64, s * 0.64), 30 * 16, 280 * 16);
     p.setBrush(ICON_FG);
     p.setPen(Qt::NoPen);
     p.drawPolygon(QPolygonF({
-        QPointF(size * 0.82, size * 0.18),
-        QPointF(size * 0.82, size * 0.4),
-        QPointF(size * 0.6,  size * 0.3),
+        QPointF(s * 0.82, s * 0.18),
+        QPointF(s * 0.82, s * 0.4),
+        QPointF(s * 0.6,  s * 0.3),
     }));
-    p.end();
-    return QIcon(pm);
+}
+
+QIcon Icons::refreshIcon(int size) {
+    return makeIcon("refresh", size, drawRefresh);
 }
 
 QIcon Icons::sessionsIcon(int size) {
@@ -223,178 +266,188 @@ QIcon Icons::sessionsIcon(int size) {
 // -----------------------------------------------------------------------
 // macros_icon  — lightning bolt
 // -----------------------------------------------------------------------
-QIcon Icons::macrosIcon(int size) {
-    QPixmap pm = makePixmap(size);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
+static void drawMacros(QPainter &p, qreal s) {
     p.setPen(Qt::NoPen);
     p.setBrush(ICON_FG);
     p.drawPolygon(QPolygonF({
-        QPointF(size * 0.58, size * 0.04),
-        QPointF(size * 0.2,  size * 0.56),
-        QPointF(size * 0.46, size * 0.56),
-        QPointF(size * 0.42, size * 0.96),
-        QPointF(size * 0.8,  size * 0.44),
-        QPointF(size * 0.54, size * 0.44),
+        QPointF(s * 0.58, s * 0.04),
+        QPointF(s * 0.2,  s * 0.56),
+        QPointF(s * 0.46, s * 0.56),
+        QPointF(s * 0.42, s * 0.96),
+        QPointF(s * 0.8,  s * 0.44),
+        QPointF(s * 0.54, s * 0.44),
     }));
-    p.end();
-    return QIcon(pm);
+}
+
+QIcon Icons::macrosIcon(int size) {
+    return makeIcon("macros", size, drawMacros);
 }
 
 // -----------------------------------------------------------------------
 // settings_icon  — gear
 // -----------------------------------------------------------------------
-QIcon Icons::settingsIcon(int size) {
-    QPixmap pm = makePixmap(size);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
-    p.translate(size / 2.0, size / 2.0);
+static void drawSettings(QPainter &p, qreal s) {
+    p.translate(s / 2.0, s / 2.0);
 
     p.setPen(Qt::NoPen);
     p.setBrush(ICON_FG);
-    double radius  = size * 0.34;
-    double toothW  = size * 0.16;
-    double toothH  = size * 0.16;
+    const qreal radius = s * 0.34;
+    const qreal toothW = s * 0.16;
+    const qreal toothH = s * 0.16;
     for (int i = 0; i < 8; ++i) {
         p.save();
         p.rotate(i * 45.0);
         p.drawRoundedRect(
             QRectF(-toothW / 2.0, -(radius + toothH * 0.55), toothW, toothH),
-            1.5, 1.5
+            s * 0.06, s * 0.06
         );
         p.restore();
     }
     p.drawEllipse(QRectF(-radius, -radius, radius * 2, radius * 2));
 
     p.setCompositionMode(QPainter::CompositionMode_Clear);
-    double hole = radius * 0.5;
+    const qreal hole = radius * 0.5;
     p.drawEllipse(QRectF(-hole, -hole, hole * 2, hole * 2));
+}
 
-    p.end();
-    return QIcon(pm);
+QIcon Icons::settingsIcon(int size) {
+    return makeIcon("settings", size, drawSettings);
 }
 
 // -----------------------------------------------------------------------
-// sshIcon  — green terminal (same shape as terminalIcon)
+// sshIcon  — the terminal tile (saved SSH/WSL sessions)
 // -----------------------------------------------------------------------
 QIcon Icons::sshIcon(int size) {
     return terminalIcon(size);
 }
 
 // -----------------------------------------------------------------------
-// rdpIcon  — blue monitor with two mini windows in the screen area
+// rdpIcon  — monitor with a lit screen and a window title bar
+//
+// Paired with the SSH tile: different silhouette (wide monitor on a
+// stand vs. a square tile) and different color, so the two session types
+// are told apart by shape alone at 16px, not just by color.
 // -----------------------------------------------------------------------
-QIcon Icons::rdpIcon(int size) {
-    QPixmap pm = makePixmap(size);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
+static void drawRdp(QPainter &p, qreal s) {
     p.setPen(Qt::NoPen);
 
-    // Monitor bezel
-    p.setBrush(ACCENT_BLUE);
-    p.drawRoundedRect(QRectF(1, size * 0.06, size - 2, size * 0.66), 2, 2);
+    // Monitor body
+    p.setBrush(RDP_FRAME);
+    p.drawRoundedRect(QRectF(s * 0.04, s * 0.13, s * 0.92, s * 0.60),
+                      s * 0.11, s * 0.11);
 
-    // Screen area (dark fill)
-    p.setBrush(DARK_BG);
-    p.drawRect(QRectF(size * 0.08, size * 0.13, size * 0.84, size * 0.52));
+    // Lit screen
+    p.setBrush(RDP_SCREEN);
+    p.drawRoundedRect(QRectF(s * 0.14, s * 0.22, s * 0.72, s * 0.42),
+                      s * 0.05, s * 0.05);
 
-    // Stand
-    p.setBrush(ACCENT_BLUE);
-    p.drawRect(QRectF(size * 0.42, size * 0.72, size * 0.16, size * 0.14));
-    p.drawRoundedRect(QRectF(size * 0.22, size * 0.84, size * 0.56, size * 0.06), 2, 2);
+    // Window title bar inside the screen — the "remote desktop" hint
+    p.setBrush(RDP_BAR);
+    p.drawRoundedRect(QRectF(s * 0.21, s * 0.29, s * 0.58, s * 0.09),
+                      s * 0.035, s * 0.035);
 
-    // Two small windows on the screen (remote-desktop hint)
-    p.setBrush(ICON_FG_MUTED);
-    p.drawRoundedRect(QRectF(size * 0.13, size * 0.19, size * 0.31, size * 0.2),  1, 1);
-    p.drawRoundedRect(QRectF(size * 0.52, size * 0.26, size * 0.31, size * 0.2),  1, 1);
+    // Neck and base
+    p.setBrush(RDP_FRAME);
+    p.drawRect(QRectF(s * 0.44, s * 0.73, s * 0.12, s * 0.11));
+    p.drawRoundedRect(QRectF(s * 0.26, s * 0.83, s * 0.48, s * 0.09),
+                      s * 0.045, s * 0.045);
+}
 
-    p.end();
-    return QIcon(pm);
+QIcon Icons::rdpIcon(int size) {
+    return makeIcon("rdp", size, drawRdp);
 }
 
 // -----------------------------------------------------------------------
 // sidebarToggleIcon  — panel outline with a filled left column
 // -----------------------------------------------------------------------
-QIcon Icons::sidebarToggleIcon(int size) {
-    QPixmap pm = makePixmap(size);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
-
-    QRectF outline(size * 0.1, size * 0.16, size * 0.8, size * 0.68);
+static void drawSidebarToggle(QPainter &p, qreal s) {
+    const QRectF outline(s * 0.1, s * 0.16, s * 0.8, s * 0.68);
     QPen pen(ICON_FG);
-    pen.setWidthF(size * 0.08);
+    pen.setWidthF(s * 0.08);
+    pen.setJoinStyle(Qt::RoundJoin);
     p.setPen(pen);
     p.setBrush(Qt::NoBrush);
-    p.drawRoundedRect(outline, 2, 2);
+    p.drawRoundedRect(outline, s * 0.08, s * 0.08);
 
     p.setPen(Qt::NoPen);
     p.setBrush(ICON_FG);
-    double colW = outline.width() * 0.36;
+    const qreal colW = outline.width() * 0.36;
     p.drawRect(QRectF(outline.left(), outline.top(), colW, outline.height()));
+}
 
-    p.end();
-    return QIcon(pm);
+QIcon Icons::sidebarToggleIcon(int size) {
+    return makeIcon("sidebartoggle", size, drawSidebarToggle);
 }
 
 // -----------------------------------------------------------------------
 // logIcon — document with horizontal lines + red record dot
 // -----------------------------------------------------------------------
-QIcon Icons::logIcon(int size) {
-    QPixmap pm = makePixmap(size);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
+static void drawLog(QPainter &p, qreal s) {
     p.setPen(Qt::NoPen);
 
     // Document body
     p.setBrush(ICON_FG);
-    double fold = size * 0.24;
+    const qreal fold = s * 0.24;
     p.drawPolygon(QPolygonF({
-        QPointF(size * 0.16, size * 0.06),
-        QPointF(size * 0.76 - fold, size * 0.06),
-        QPointF(size * 0.76, size * 0.06 + fold),
-        QPointF(size * 0.76, size * 0.94),
-        QPointF(size * 0.16, size * 0.94),
+        QPointF(s * 0.16, s * 0.06),
+        QPointF(s * 0.76 - fold, s * 0.06),
+        QPointF(s * 0.76, s * 0.06 + fold),
+        QPointF(s * 0.76, s * 0.94),
+        QPointF(s * 0.16, s * 0.94),
     }));
 
     // Fold corner
     p.setBrush(ICON_FG_MUTED);
     p.drawPolygon(QPolygonF({
-        QPointF(size * 0.76 - fold, size * 0.06),
-        QPointF(size * 0.76,        size * 0.06 + fold),
-        QPointF(size * 0.76 - fold, size * 0.06 + fold),
+        QPointF(s * 0.76 - fold, s * 0.06),
+        QPointF(s * 0.76,        s * 0.06 + fold),
+        QPointF(s * 0.76 - fold, s * 0.06 + fold),
     }));
 
     // Text lines (cleared from document)
     p.setCompositionMode(QPainter::CompositionMode_Clear);
     for (int i = 0; i < 4; ++i) {
-        double y = size * (0.38 + i * 0.135);
-        double w = (i == 3) ? size * 0.28 : size * 0.42;
-        p.fillRect(QRectF(size * 0.26, y, w, size * 0.07), Qt::black);
+        const qreal y = s * (0.38 + i * 0.135);
+        const qreal w = (i == 3) ? s * 0.28 : s * 0.42;
+        p.fillRect(QRectF(s * 0.26, y, w, s * 0.07), Qt::black);
     }
 
     // Red record dot (top-right overlay)
     p.setCompositionMode(QPainter::CompositionMode_SourceOver);
     p.setBrush(ACCENT_RED);
-    double dotR = size * 0.16;
-    p.drawEllipse(QRectF(size * 0.62, size * 0.02, dotR * 2, dotR * 2));
-    p.end();
-    return QIcon(pm);
+    const qreal dotR = s * 0.16;
+    p.drawEllipse(QRectF(s * 0.62, s * 0.02, dotR * 2, dotR * 2));
+}
+
+QIcon Icons::logIcon(int size) {
+    return makeIcon("log", size, drawLog);
 }
 
 // -----------------------------------------------------------------------
 // downArrowPixmap
+//
+// Written to a PNG for QSS url() references, so it is rendered at the
+// primary screen's device pixel ratio rather than the 1x/2x/3x set —
+// a stylesheet can only name one file.
 // -----------------------------------------------------------------------
 QPixmap Icons::downArrowPixmap(const QColor &color, int size) {
-    QPixmap pm = makePixmap(size);
+    const qreal dpr = qApp ? qApp->devicePixelRatio() : 1.0;
+    const int px = qMax(1, qRound(size * dpr));
+
+    QPixmap pm(px, px);
+    pm.fill(Qt::transparent);
+    pm.setDevicePixelRatio(dpr);
+
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen);
     p.setBrush(color);
-    double margin = size * 0.2;
+    const qreal s = size;
+    const qreal margin = s * 0.2;
     p.drawPolygon(QPolygonF({
-        QPointF(margin,        size * 0.35),
-        QPointF(size - margin, size * 0.35),
-        QPointF(size / 2.0,   size * 0.7),
+        QPointF(margin,     s * 0.35),
+        QPointF(s - margin, s * 0.35),
+        QPointF(s / 2.0,    s * 0.7),
     }));
     p.end();
     return pm;

@@ -19,11 +19,15 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSize>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
 
 static const int FOLDER_ROLE = Qt::UserRole + 1;
+
+// Icon edge length in the saved-sessions tree.
+static const int kSessionIconPx = 18;
 
 // -----------------------------------------------------------------------
 // SessionEditDialog (inner)
@@ -187,6 +191,9 @@ SessionSidebar::SessionSidebar(QWidget *parent) : QWidget(parent) {
     m_listWidget = new SessionTreeWidget;
     m_listWidget->setHeaderHidden(true);
     m_listWidget->setIndentation(12);
+    // Session and folder glyphs are drawn at this size — pinned so the tree
+    // never rescales them, and so folders match their child sessions.
+    m_listWidget->setIconSize(QSize(kSessionIconPx, kSessionIconPx));
     connect(m_listWidget, &QTreeWidget::itemDoubleClicked,
             this, [this]() { onConnect(); });
     m_listWidget->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -266,7 +273,8 @@ void SessionSidebar::populate() {
         QTreeWidgetItem *item = new QTreeWidgetItem({sess.value("name").toString()});
         item->setData(0, Qt::UserRole, idx);
         QString sessType = sess.value("type").toString("ssh");
-        item->setIcon(0, (sessType == "rdp") ? Icons::rdpIcon(16) : Icons::sshIcon(16));
+        item->setIcon(0, (sessType == "rdp") ? Icons::rdpIcon(kSessionIconPx)
+                                             : Icons::sshIcon(kSessionIconPx));
         m_listWidget->addTopLevelItem(item);
     }
 
@@ -294,7 +302,7 @@ void SessionSidebar::populate() {
         QFont f = header->font(0);
         f.setBold(true);
         header->setFont(0, f);
-        header->setIcon(0, Icons::folderIcon());
+        header->setIcon(0, Icons::folderIcon(kSessionIconPx));
         header->setData(0, FOLDER_ROLE, folder);
         m_listWidget->addTopLevelItem(header);
 
@@ -309,7 +317,8 @@ void SessionSidebar::populate() {
             QTreeWidgetItem *item = new QTreeWidgetItem({sess.value("name").toString()});
             item->setData(0, Qt::UserRole, idx);
             QString sessType = sess.value("type").toString("ssh");
-            item->setIcon(0, (sessType == "rdp") ? Icons::rdpIcon(16) : Icons::sshIcon(16));
+            item->setIcon(0, (sessType == "rdp") ? Icons::rdpIcon(kSessionIconPx)
+                                             : Icons::sshIcon(kSessionIconPx));
             header->addChild(item);
         }
     }
