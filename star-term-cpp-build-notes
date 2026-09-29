@@ -5,13 +5,19 @@ Notes:
 All of the following steps to be perfomed in Visual Studio Developer Command Prompt on Windows, not in Claude WSL session.  This was a Claude recommendation.
 
 ---
-Full Binary Be-build (e.g. CMakeLists.txt has been modified)
+Full Binary Re-build (e.g. CMakeLists.txt or vcpkg.json has been modified)
 ---
 
 1. U:
 2. cd \home\huhl\git-repos\star-term\windows-cpp
 3. Delete build folder
 4. cmake -B build -G "Visual Studio 18 2026" -A x64 -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DQt6_DIR=C:/Qt/6.5.3/msvc2019_64/6.9.3/msvc2022_64/lib/cmake/Qt6
+5. cmake --build build --config Release
+
+Step 4 only configures and installs the vcpkg dependencies; step 5 is what
+compiles.  To confirm the dependency versions that were linked, check
+build\vcpkg_installed\x64-windows\share\<port>\vcpkg.spdx.json - that file, not
+the timestamps in build\Release, is what says which port version was used.
 
 ---
 Release Build (if CMakeLists.txt has not been modified)
