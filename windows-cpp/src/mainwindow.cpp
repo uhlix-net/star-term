@@ -1,7 +1,8 @@
 #include "mainwindow.h"
 #include "colors.h"
 #include "config.h"
-#include "connectiondialog.h"
+#include "secretstore.h"
+#include "sessiondialog.h"
 #include "icons.h"
 #include "licensedialog.h"
 #include "licensing.h"
@@ -66,6 +67,9 @@ static const QString APP_VERSION = "0.8.0";
 
 static const QString UPDATE_HISTORY = R"(Version 0.8.0
 
+- File > Connect now opens the same dialog as New Session in the Sessions pane, instead of a second, slightly different one. It gains a "Save to Sessions" tick box, off by default, so a connection can be kept for later without retyping it
+- Opening a saved session no longer stops to ask for the SSH key passphrase. The passphrase now lives on the session profile (Edit > SSH Options), hidden as you type with a Show/Hide button, and is stored encrypted for your Windows account rather than in plain text
+- Installing an update now brings Star Term back up afterwards if it was open when the installer started — whether the update came from Help > Check for Updates or from running the downloaded installer by hand. If Star Term was closed, it stays closed
 - Security: the bundled SSH library is patched against three flaws that a malicious or impersonated server could trigger on connection, before you log in. The most serious allowed memory corruption on your machine (CVE-2026-55200, CVE-2026-58050, CVE-2026-55199)
 - The light theme is now plain neutral grey instead of blue-tinted, with blue kept for selected items, focus outlines and pressed buttons
 - Saved sessions have new icons: SSH sessions show a terminal tile, RDP sessions a monitor, so the two are told apart by shape as well as colour
@@ -714,32 +718,38 @@ void MainWindow::openWslDialog() {
 }
 
 void MainWindow::openConnectionDialog() {
-    ConnectionDialog dlg(this);
+    // Same dialog the Sessions pane uses for New Session, so the two cannot
+    // drift apart. In ConnectNow mode it also offers "Save to Sessions".
+    SessionEditDialog dlg(this, {}, folderNames(), SessionEditDialog::ConnectNow);
     if (!dlg.exec()) return;
 
-    QJsonObject params = dlg.getConnectionParams();
-    QString name = QString("%1@%2").arg(
-        params["username"].toString(), params["host"].toString());
+    QJsonObject session = dlg.getSession();
 
-    if (params.value("type").toString() == "rdp") {
-        params["name"] = name;
-        connectSavedSession(params);
-        return;
+    if (dlg.saveRequested()) {
+        QJsonArray sessions = loadSessions();
+        sessions.append(session);
+        saveSessions(sessions);
+        m_sidebar->reload();
     }
 
-    // The dialog no longer collects a password, so prompt for one here — the
-    // same flow a saved session uses.  A private key supplies its own passphrase.
-    if (params["key_path"].toString().isEmpty()) {
-        bool ok = false;
-        QString password = QInputDialog::getText(
-            this, "Password",
-            QString("Password for %1:").arg(name),
-            QLineEdit::Password, "", &ok);
-        if (!ok) return;
-        params["password"] = password;
-    }
+    // One path for both: handles RDP, prompts for a password when the session
+    // does not use a key, and takes the key passphrase from the profile.
+    connectSavedSession(session);
+}
 
-    connectSession(params, name);
+// Folder names already in use, so the dialog's folder box offers them.
+QStringList MainWindow::folderNames() const {
+    QStringList names;
+    auto add = [&names](const QString &folder) {
+        if (!folder.isEmpty() && !names.contains(folder))
+            names << folder;
+    };
+    for (const auto &v : loadFolders())
+        add(v.toString());
+    for (const auto &v : loadSessions())
+        add(v.toObject().value("folder").toString());
+    names.sort(Qt::CaseInsensitive);
+    return names;
 }
 
 void MainWindow::connectSavedSession(const QJsonObject &session) {
@@ -770,12 +780,11 @@ void MainWindow::connectSavedSession(const QJsonObject &session) {
                 "or override it on this session's profile.");
             return;
         }
-        bool ok = false;
-        keyPassphrase = QInputDialog::getText(
-            this, "Key Passphrase",
-            QString("Passphrase for %1 (leave blank if none):").arg(keyPath),
-            QLineEdit::Password, "", &ok);
-        if (!ok) return;
+        // No prompt here. The passphrase is whatever the session profile stores
+        // (empty for an unprotected key), so opening a saved session never stops
+        // to ask. Edit it under Session > Edit > SSH Options.
+        keyPassphrase = SecretStore::unprotect(
+            session.value("key_passphrase_enc").toString());
     } else {
         bool ok = false;
         password = QInputDialog::getText(
@@ -1295,10 +1304,14 @@ void MainWindow::downloadAndInstall(const QString &url) {
         }
         f.close();
         reply->deleteLater();
-        // /S installs without any of the wizard pages (UAC still prompts) and
-        // makes the installer relaunch Star Term once it is done, so an update
-        // started from here comes back up on its own.
-        QProcess::startDetached(path, {"/S"});
+        // /S installs without any of the wizard pages (UAC still prompts).
+        // /RELAUNCH tells the installer to start Star Term again when it is
+        // finished: we are about to quit so it can overwrite our own binary, and
+        // its own process check can race with that exit. Without the flag the
+        // installer only relaunches when it finds Star Term still running, which
+        // is what makes running the downloaded installer by hand behave
+        // correctly — closed stays closed.
+        QProcess::startDetached(path, {"/S", "/RELAUNCH"});
         QApplication::quit();
     });
 }

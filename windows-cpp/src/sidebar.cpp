@@ -1,6 +1,7 @@
 #include "sidebar.h"
 #include "config.h"
 #include "icons.h"
+#include "sessiondialog.h"
 
 #include <QAbstractItemView>
 #include <QCheckBox>
@@ -29,125 +30,6 @@ static const int FOLDER_ROLE = Qt::UserRole + 1;
 // Icon edge length in the saved-sessions tree.
 static const int kSessionIconPx = 18;
 
-// -----------------------------------------------------------------------
-// SessionEditDialog (inner)
-// -----------------------------------------------------------------------
-class SessionEditDialog : public QDialog {
-public:
-    SessionEditDialog(QWidget *parent, const QJsonObject &session, const QStringList &folders)
-        : QDialog(parent)
-    {
-        setWindowTitle("Session");
-
-        QString type = session.value("type").toString("ssh");
-
-        m_nameEdit   = new QLineEdit(session.value("name").toString());
-        m_folderEdit = new QComboBox;
-        m_folderEdit->setEditable(true);
-        m_folderEdit->addItems(folders);
-        m_folderEdit->setCurrentText(session.value("folder").toString());
-        m_folderEdit->lineEdit()->setPlaceholderText("(no folder)");
-
-        m_typeCombo = new QComboBox;
-        m_typeCombo->addItems({"SSH", "RDP"});
-        m_typeCombo->setCurrentText(type.toUpper());
-
-        m_hostEdit     = new QLineEdit(session.value("host").toString());
-        int defaultPort = (type == "rdp") ? 3389 : 22;
-        m_portEdit     = new QLineEdit(QString::number(session.value("port").toInt(defaultPort)));
-        m_usernameEdit = new QLineEdit(session.value("username").toString());
-
-        // SSH-only group
-        m_sshGroup = new QGroupBox("SSH Options");
-        m_useKeyCheck  = new QCheckBox("Use SSH key authentication");
-        m_useKeyCheck->setChecked(session.value("use_key").toBool(false));
-        m_keyPathEdit  = new QLineEdit(session.value("key_path").toString());
-        m_keyPathEdit->setPlaceholderText("(uses Settings key)");
-        m_keyPathEdit->setMinimumWidth(160);
-
-        QPushButton *browseBtn = new QPushButton("Browse...");
-        connect(browseBtn, &QPushButton::clicked, this, [this]() {
-            QString p = QFileDialog::getOpenFileName(this, "Select Private Key");
-            if (!p.isEmpty()) m_keyPathEdit->setText(p);
-        });
-        QPushButton *clearBtn = new QPushButton("Clear");
-        connect(clearBtn, &QPushButton::clicked, m_keyPathEdit, &QLineEdit::clear);
-
-        QWidget *keyRow = new QWidget;
-        QHBoxLayout *kl = new QHBoxLayout(keyRow);
-        kl->setContentsMargins(0,0,0,0);
-        kl->addWidget(m_keyPathEdit);
-        kl->addWidget(browseBtn);
-        kl->addWidget(clearBtn);
-
-        QFormLayout *sshForm = new QFormLayout(m_sshGroup);
-        sshForm->addRow(m_useKeyCheck);
-        sshForm->addRow("SSH key override:", keyRow);
-
-        QFormLayout *form = new QFormLayout;
-        form->addRow("Name:",    m_nameEdit);
-        form->addRow("Folder:",  m_folderEdit);
-        form->addRow("Type:",    m_typeCombo);
-        form->addRow("Host:",    m_hostEdit);
-        form->addRow("Port:",    m_portEdit);
-        form->addRow("Username:", m_usernameEdit);
-
-        QDialogButtonBox *buttons = new QDialogButtonBox(
-            QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-        connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
-        connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-
-        QVBoxLayout *root = new QVBoxLayout(this);
-        root->addLayout(form);
-        root->addWidget(m_sshGroup);
-        root->addWidget(buttons);
-
-        connect(m_typeCombo, &QComboBox::currentTextChanged,
-                this, &SessionEditDialog::onTypeChanged);
-        onTypeChanged(m_typeCombo->currentText());
-    }
-
-    QJsonObject getSession() const {
-        QString typeStr = m_typeCombo->currentText().toLower(); // "ssh" or "rdp"
-        int defaultPort = (typeStr == "rdp") ? 3389 : 22;
-        QString portText = m_portEdit->text().trimmed();
-        bool ok = false;
-        int port = portText.toInt(&ok);
-        if (!ok) port = defaultPort;
-
-        QString host = m_hostEdit->text().trimmed();
-        QString name = m_nameEdit->text().trimmed();
-        if (name.isEmpty()) name = host;
-
-        QJsonObject s;
-        s["type"]     = typeStr;
-        s["name"]     = name;
-        s["folder"]   = m_folderEdit->currentText().trimmed();
-        s["host"]     = host;
-        s["port"]     = port;
-        s["username"] = m_usernameEdit->text().trimmed();
-        s["use_key"]  = m_useKeyCheck->isChecked();
-        s["key_path"] = m_keyPathEdit->text().trimmed();
-        return s;
-    }
-
-private slots:
-    void onTypeChanged(const QString &text) {
-        bool isSsh = (text == "SSH");
-        m_sshGroup->setVisible(isSsh);
-        // Flip port default when switching types
-        int curPort = m_portEdit->text().toInt();
-        if (!isSsh && curPort == 22)   m_portEdit->setText("3389");
-        if (isSsh  && curPort == 3389) m_portEdit->setText("22");
-        adjustSize();
-    }
-
-private:
-    QLineEdit  *m_nameEdit, *m_hostEdit, *m_portEdit, *m_usernameEdit, *m_keyPathEdit;
-    QComboBox  *m_folderEdit, *m_typeCombo;
-    QCheckBox  *m_useKeyCheck;
-    QGroupBox  *m_sshGroup;
-};
 
 // -----------------------------------------------------------------------
 // SessionTreeWidget

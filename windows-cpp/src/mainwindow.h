@@ -4,6 +4,7 @@
 #include <QMainWindow>
 #include <QList>
 #include <QJsonObject>
+#include <QStringList>
 
 class QAction;
 class QActionGroup;
@@ -55,6 +56,7 @@ private slots:
                           bool mismatch);
 
 private:
+    QStringList folderNames() const;
     void addPane(SessionPane *pane);
     void closePane(SessionPane *pane);
     void closeRdpPane(RdpPane *pane);
