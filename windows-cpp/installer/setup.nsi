@@ -8,6 +8,11 @@
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "WinMessages.nsh"
+!include "FileFunc.nsh"
+
+; "1" when Star Term was running as this installer started, so it should be
+; brought back up afterwards. Set in .onInit, read in .onInstSuccess.
+Var WasRunning
 
 !define MUI_ICON "app.ico"
 
@@ -42,6 +47,18 @@ FunctionEnd
 Function .onInit
   SetRegView 64
 
+  StrCpy $WasRunning "0"
+
+  ; The in-app updater passes /RELAUNCH. It quits the running copy immediately
+  ; before starting us, so the process check below can race with that exit and
+  ; come back "not running" — the flag settles it.
+  ${GetParameters} $R2
+  ClearErrors
+  ${GetOptions} $R2 "/RELAUNCH" $R3
+  ${IfNot} ${Errors}
+    StrCpy $WasRunning "1"
+  ${EndIf}
+
   ; Bring the installer window to the front so it isn't left behind
   ; other open windows.
   BringToFront
@@ -55,6 +72,9 @@ Function .onInit
     StrCmp $0 "0" not_running
 
   app_running:
+    ; Running now, so put it back afterwards — however this installer was started.
+    StrCpy $WasRunning "1"
+
     ; /SD IDYES: a silent install is the in-app updater, which already asked the
     ; user and is itself the running copy — prompting there would hang unseen.
     MessageBox MB_YESNO|MB_ICONQUESTION \
@@ -92,12 +112,14 @@ Function .onInit
   not_installed:
 FunctionEnd
 
-; Installing from within the app runs us silently, and the app has exited to let
-; us overwrite it — so bring the new build back up when we are done. Launching
-; through explorer.exe hands the process to the shell, which runs it at the
-; user's own integrity level instead of inheriting the installer's admin token.
+; Relaunch only if Star Term was open when this installer started — whether that
+; was the in-app updater (which passes /RELAUNCH) or the user running the
+; downloaded installer over a running copy. Installing while it is closed leaves
+; it closed. Launching through explorer.exe hands the process to the shell, which
+; runs it at the user's own integrity level instead of inheriting the installer's
+; admin token.
 Function .onInstSuccess
-  ${If} ${Silent}
+  ${If} $WasRunning == "1"
     Exec '"$WINDIR\explorer.exe" "$INSTDIR\star_term.exe"'
   ${EndIf}
 FunctionEnd
@@ -125,6 +147,29 @@ Section "Application" SecApp
   File "app.ico"
   File "run_star_term.bat"
 
+  ; Uninstaller and registration come first. They used to sit after the shell
+  ; notify below, which meant a failure there took them down with it — see the
+  ; comment on SHChangeNotify.
+  ClearErrors
+  WriteUninstaller "$INSTDIR\Uninstall.exe"
+  ${If} ${Errors}
+    DetailPrint "ERROR: could not write $INSTDIR\Uninstall.exe"
+    ${IfNot} ${Silent}
+      MessageBox MB_OK|MB_ICONEXCLAMATION \
+        "Could not write the uninstaller to:$\n$INSTDIR\Uninstall.exe$\n$\nThe application is installed, but will not appear in Apps & Features."
+    ${EndIf}
+  ${EndIf}
+
+  ; Register with Windows "Apps & Features"
+  WriteRegStr HKLM "${UNINSTKEY}" "DisplayName"      "${DISPLAYNAME}"
+  WriteRegStr HKLM "${UNINSTKEY}" "UninstallString"  '"$INSTDIR\Uninstall.exe"'
+  WriteRegStr HKLM "${UNINSTKEY}" "InstallLocation"  "$INSTDIR"
+  WriteRegStr HKLM "${UNINSTKEY}" "Publisher"        "${PUBLISHER}"
+  WriteRegStr HKLM "${UNINSTKEY}" "DisplayVersion"   "${VERSION}"
+  WriteRegStr HKLM "${UNINSTKEY}" "DisplayIcon"      "$INSTDIR\app.ico"
+  WriteRegDWORD HKLM "${UNINSTKEY}" "NoModify" 1
+  WriteRegDWORD HKLM "${UNINSTKEY}" "NoRepair" 1
+
   ; Delete existing shortcuts before recreating so the .lnk icon cache is flushed
   Delete "$SMPROGRAMS\${DISPLAYNAME}\${DISPLAYNAME}.lnk"
   Delete "$SMPROGRAMS\${DISPLAYNAME}\Uninstall ${DISPLAYNAME}.lnk"
@@ -139,21 +184,16 @@ Section "Application" SecApp
   CreateShortcut "$DESKTOP\${DISPLAYNAME}.lnk" \
     "$INSTDIR\star_term.exe" "" "$INSTDIR\star_term.exe" 0
 
-  ; Force a synchronous shell icon cache flush (SHCNE_ASSOCCHANGED | SHCNF_FLUSH)
-  System::Call "Shell32::SHChangeNotify(l 0x8000000, l 0x1000, p 0, p 0)"
-
-  ; Uninstaller
-  WriteUninstaller "$INSTDIR\Uninstall.exe"
-
-  ; Register with Windows "Apps & Features"
-  WriteRegStr HKLM "${UNINSTKEY}" "DisplayName"      "${DISPLAYNAME}"
-  WriteRegStr HKLM "${UNINSTKEY}" "UninstallString"  '"$INSTDIR\Uninstall.exe"'
-  WriteRegStr HKLM "${UNINSTKEY}" "InstallLocation"  "$INSTDIR"
-  WriteRegStr HKLM "${UNINSTKEY}" "Publisher"        "${PUBLISHER}"
-  WriteRegStr HKLM "${UNINSTKEY}" "DisplayVersion"   "${VERSION}"
-  WriteRegStr HKLM "${UNINSTKEY}" "DisplayIcon"      "$INSTDIR\app.ico"
-  WriteRegDWORD HKLM "${UNINSTKEY}" "NoModify" 1
-  WriteRegDWORD HKLM "${UNINSTKEY}" "NoRepair" 1
+  ; Shell icon cache refresh (SHCNE_ASSOCCHANGED | SHCNF_FLUSHNOWAIT).
+  ;
+  ; Both fixes here matter. SHChangeNotify takes LONG + UINT, which are 4 bytes
+  ; each; the System plugin's "l" is int64, so passing "l" pushed 8 bytes for
+  ; each on a 32-bit installer and left the stack unbalanced after this stdcall
+  ; returned. And SHCNF_FLUSH blocks until the shell has processed the event.
+  ; Between them this call took the installer down mid-section: files and
+  ; shortcuts landed, everything after it did not, and .onInstSuccess — which
+  ; is what relaunches Star Term — never ran.
+  System::Call "Shell32::SHChangeNotify(i 0x8000000, i 0x2000, p 0, p 0)"
 SectionEnd
 
 Section "Uninstall"
