@@ -5,6 +5,17 @@ A C++17/Qt6 SSH terminal application for Windows.
 C++ is the standard for Star Term going forward; the Python/PySide6 edition in
 `../windows/` is legacy and maintained as-is.
 
+## Screenshots
+
+Demo data: made-up servers and folders.
+
+| | |
+|---|---|
+| ![Sessions in folders, tabs, a deploy run and live host stats](docs/screenshots/sessions.png) | ![Multi-Exec View: one command typed into four sessions](docs/screenshots/multi-exec.png) |
+| Sessions in folders, tabs and live host stats | Multi-Exec View: one command, every session |
+| ![Remote Files following the terminal's folder](docs/screenshots/remote-files.png) | ![Macros panel](docs/screenshots/macros.png) |
+| Remote Files following the terminal's folder | Macros, sent to one session or all |
+
 ## Dependencies
 
 - **Qt 6.9.x** (MSVC 2022 64-bit) — QtCore, QtGui, QtWidgets, QtNetwork, QtSvg
